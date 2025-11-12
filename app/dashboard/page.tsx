@@ -1,42 +1,48 @@
+"use client"
+
+import type React from "react"
+import { useState, useEffect } from "react"
+import api from "@/lib/api"
+
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Car, Users, DollarSign, Clock } from "lucide-react"
 
-const revenueData = [
-  { day: "Mon", revenue: 2450 },
-  { day: "Tue", revenue: 2847 },
-  { day: "Wed", revenue: 2234 },
-  { day: "Thu", revenue: 2890 },
-  { day: "Fri", revenue: 3120 },
-  { day: "Sat", revenue: 2678 },
-  { day: "Sun", revenue: 2156 },
-]
-
-const occupancyData = [
-  { hour: "7am", vehicles: 45 },
-  { hour: "8am", vehicles: 78 },
-  { hour: "9am", vehicles: 95 },
-  { hour: "10am", vehicles: 112 },
-  { hour: "11am", vehicles: 127 },
-  { hour: "12pm", vehicles: 134 },
-  { hour: "1pm", vehicles: 128 },
-  { hour: "2pm", vehicles: 115 },
-  { hour: "3pm", vehicles: 108 },
-  { hour: "4pm", vehicles: 98 },
-  { hour: "5pm", vehicles: 89 },
-  { hour: "6pm", vehicles: 76 },
-  { hour: "7pm", vehicles: 65 },
-  { hour: "8pm", vehicles: 52 },
-  { hour: "9pm", vehicles: 38 },
-  { hour: "10pm", vehicles: 25 },
-]
-
-const userMixData = [
-  { name: "Casual Users", value: 75, color: "#A0E7E5" },
-  { name: "Monthly Parkers", value: 25, color: "#4A90A4" },
-]
+const revenueData = [/* ... */]
+const occupancyData = [/* ... */]
+const userMixData = [/* ... */]
 
 export default function DashboardPage() {
+
+  const [vehiclesParked, setVehiclesParked] = useState(0)
+  const [monthlyParkers, setMonthlyParkers] = useState(0)
+  const [todaysRevenue, setTodaysRevenue] = useState(0)
+  const [avgStayTime, setAvgStayTime] = useState("--")
+  const [isLoading, setIsLoading] = useState(true)
+  
+  useEffect(() => {
+    async function fetchDashboardData() {
+      setIsLoading(true);
+      try {
+      
+        const veiculosResponse = await api.get("/estacionamento/ativos");
+        const mensalistasResponse = await api.get("/mensalistas/");
+
+        setVehiclesParked(veiculosResponse.data.length);
+        setMonthlyParkers(mensalistasResponse.data.length);
+        
+
+      } catch (error) {
+        console.error("Erro ao buscar dados do dashboard:", error);
+        
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchDashboardData();
+  }, []);
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -45,7 +51,6 @@ export default function DashboardPage() {
           <p className="text-muted-foreground">Welcome to MedPark - Hospital Parking Management System</p>
         </div>
 
-        {/* Key metrics cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -53,7 +58,8 @@ export default function DashboardPage() {
               <Car className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">127</div>
+              {/* O número agora é dinâmico! */}
+              <div className="text-2xl font-bold">{isLoading ? "..." : vehiclesParked}</div>
               <p className="text-xs text-muted-foreground">+12% from yesterday</p>
             </CardContent>
           </Card>
@@ -64,7 +70,8 @@ export default function DashboardPage() {
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">89</div>
+              {/* O número agora é dinâmico! */}
+              <div className="text-2xl font-bold">{isLoading ? "..." : monthlyParkers}</div>
               <p className="text-xs text-muted-foreground">+3 new this month</p>
             </CardContent>
           </Card>
@@ -75,7 +82,8 @@ export default function DashboardPage() {
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">R$ 2,847</div>
+              {/* Você pode conectar 'todaysRevenue' aqui */}
+              <div className="text-2xl font-bold">{isLoading ? "..." : `R$ ${todaysRevenue}`}</div>
               <p className="text-xs text-muted-foreground">+18% from yesterday</p>
             </CardContent>
           </Card>
@@ -86,10 +94,12 @@ export default function DashboardPage() {
               <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">2h 34m</div>
+               {/* Você pode conectar 'avgStayTime' aqui */}
+              <div className="text-2xl font-bold">{isLoading ? "..." : avgStayTime}</div>
               <p className="text-xs text-muted-foreground">-8 min from yesterday</p>
             </CardContent>
           </Card>
+
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
