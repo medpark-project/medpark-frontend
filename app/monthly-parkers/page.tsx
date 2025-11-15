@@ -1,5 +1,5 @@
 "use client"
-import { useState } from "react"
+import { useState,useEffect } from "react"
 import { Search, Plus, Check, X, Eye } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,104 +10,126 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import Link from "next/link"
 import { ReviewApplicationModal } from "@/components/review-application-modal"
 import { MonthlyParkerDetailsModal } from "@/components/monthly-parker-details-modal"
+import api from "@/lib/api"
 
-// Mock data for monthly parkers
-const monthlyParkers = [
-  {
-    id: 1,
-    fullName: "Maria Silva Santos",
-    licensePlate: "ABC-1234",
-    currentPlan: "Plano Integral 24h",
-    status: "Active" as const,
-  },
-  {
-    id: 2,
-    fullName: "João Pedro Oliveira",
-    licensePlate: "XYZ-5678",
-    currentPlan: "Plano Diurno",
-    status: "Active" as const,
-  },
-  {
-    id: 3,
-    fullName: "Ana Carolina Costa",
-    licensePlate: "DEF-9012",
-    currentPlan: "Plano Noturno",
-    status: "Inactive" as const,
-  },
-  {
-    id: 4,
-    fullName: "Carlos Eduardo Lima",
-    licensePlate: "GHI-3456",
-    currentPlan: "Plano Integral 24h",
-    status: "Active" as const,
-  },
-]
+interface Application {
+  id: number
+  nome_completo: string
+  plano_id: number
+  created_at: string
+  status: string
+}
 
-// Mock data for pending applications
-const pendingApplications = [
-  {
-    id: 1,
-    applicantName: "Roberto Silva Mendes",
-    requestedPlan: "Plano Integral 24h",
-    dateOfRequest: "2025-01-08",
-  },
-  {
-    id: 2,
-    applicantName: "Fernanda Costa Lima",
-    requestedPlan: "Plano Diurno",
-    dateOfRequest: "2025-01-07",
-  },
-  {
-    id: 3,
-    applicantName: "Paulo Eduardo Santos",
-    requestedPlan: "Plano Noturno",
-    dateOfRequest: "2025-01-06",
-  },
-]
+interface Assinatura {
+  id: number
+  data_inicio: string
+  data_fim: string | null
+  status: string
+  mensalista_id: number
+  plano: {
+    id: number
+    nome: string
+    preco_mensal: number
+    descricao: string
+  }
+}
+
+interface Parker {
+  id: number
+  nome_completo: string
+  veiculo: { placa: string } | null
+  assinatura: Assinatura | null
+}
 
 export default function MonthlyParkersPage() {
   const [searchTerm, setSearchTerm] = useState("")
-  const [applications, setApplications] = useState(pendingApplications)
-  const [registeredParkers, setRegisteredParkers] = useState(monthlyParkers)
-  const [selectedApplication, setSelectedApplication] = useState<(typeof pendingApplications)[0] | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [applications, setApplications] = useState<Application[]>([])
+  const [registeredParkers, setRegisteredParkers] = useState<Parker[]>([])
+  const [selectedApplication, setSelectedApplication] = useState<Application | null>(null)
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false)
-  const [selectedParker, setSelectedParker] = useState<(typeof monthlyParkers)[0] | null>(null)
+  const [selectedParker, setSelectedParker] = useState<Parker | null>(null)
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false)
-  const userRole = "Admin" // This would come from auth context in real app
+  const userRole = "Admin" // TODO: Isso deve vir de um Contexto de Autenticação
 
-  const filteredParkers = registeredParkers.filter(
-    (parker) =>
-      parker.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      parker.licensePlate.toLowerCase().includes(searchTerm.toLowerCase()),
-  )
+  const fetchPageData = async () => {
+    setIsLoading(true)
+    try {
+      // 1. Busca as solicitações (isso já funciona)
+      const solRes = await api.get("/solicitacoes-mensalista/")
+      setApplications(solRes.data.filter((app: Application) => app.status === "PENDENTE"))
 
-  const handleApprove = (applicationId: number) => {
-    const application = applications.find((app) => app.id === applicationId)
-    if (application) {
-      setApplications((prev) => prev.filter((app) => app.id !== applicationId))
-      const newParker = {
-        id: Math.max(...registeredParkers.map((p) => p.id)) + 1,
-        fullName: application.applicantName,
-        licensePlate: "NEW-" + String(applicationId).padStart(3, "0"),
-        currentPlan: application.requestedPlan,
-        status: "Active" as const,
-      }
-      setRegisteredParkers((prev) => [...prev, newParker])
+      // 2. Busca a lista "magra" de mensalistas
+      const menRes = await api.get("/mensalistas/")
+      const mensalistasMagros: Parker[] = menRes.data
+      
+      // 3. "Enriquece" cada mensalista buscando sua assinatura ativa
+      const mensalistasEnriquecidos = await Promise.all(
+        mensalistasMagros.map(async (mensalista) => {
+          try {
+            // Tenta buscar a assinatura ativa que funciona
+            const assinaturaRes = await api.get(`/assinaturas/mensalista/${mensalista.id}/ativa`)
+            // Anexa a assinatura encontrada ao objeto do mensalista
+            return { ...mensalista, assinatura: assinaturaRes.data }
+          } catch (error) {
+            // Se der 404 (sem assinatura ativa), só retorna o mensalista "magro"
+            // (que já tem 'assinatura: null' do backend)
+            return mensalista
+          }
+        })
+      )
+
+      setRegisteredParkers(mensalistasEnriquecidos)
+
+    } catch (error) {
+      console.error("Erro ao buscar dados da página:", error)
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleDecline = (applicationId: number) => {
-    setApplications((prev) => prev.filter((app) => app.id !== applicationId))
+  useEffect(() => {
+    fetchPageData()
+  }, [])
+
+  const filteredParkers = registeredParkers.filter(
+    (parker) =>
+      parker.nome_completo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      parker.veiculo?.placa.toLowerCase().includes(searchTerm.toLowerCase()),
+  )
+
+  const handleApprove = async (applicationId: number) => {
+    try {
+      await api.put(`/solicitacoes-mensalista/${applicationId}`, { status: "APROVADO" })
+      await fetchPageData()
+    } catch (error) {
+      console.error("Erro ao aprovar solicitação:", error)
+    }
+    setIsReviewModalOpen(false) // Fecha o modal
   }
 
-  const handleViewDetails = (application: (typeof pendingApplications)[0]) => {
+  const handleDecline = async (applicationId: number) => {
+    try {
+      await api.put(`/solicitacoes-mensalista/${applicationId}`, { status: "RECUSADO" })
+      await fetchPageData()
+    } catch (error) {
+      console.error("Erro ao recusar solicitação:", error)
+    }
+    setIsReviewModalOpen(false)
+  }
+
+  const handleViewDetails = (application: Application) => {
     setSelectedApplication(application)
     setIsReviewModalOpen(true)
   }
 
-  const handleViewParkerDetails = (parker: (typeof monthlyParkers)[0]) => {
+  const handleViewParkerDetails = (parker: Parker) => {
     setSelectedParker(parker)
     setIsDetailsModalOpen(true)
+  }
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString("pt-BR")
   }
 
   return (
@@ -152,16 +174,26 @@ export default function MonthlyParkersPage() {
                 <TableRow>
                   <TableHead>Applicant Name</TableHead>
                   <TableHead>Requested Plan</TableHead>
-                  <TableHead>Date of Request</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {applications.map((application) => (
+            
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center py-8">Carregando...</TableCell>
+                  </TableRow>
+                ) : applications.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                      No pending applications at this time.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                applications.map((application) => (
                   <TableRow key={application.id}>
-                    <TableCell className="font-medium">{application.applicantName}</TableCell>
-                    <TableCell>{application.requestedPlan}</TableCell>
-                    <TableCell>{new Date(application.dateOfRequest).toLocaleDateString("pt-BR")}</TableCell>
+                    <TableCell className="font-medium">{application.nome_completo}</TableCell>
+                    <TableCell>{application.plano_id}</TableCell>{/* TODO: Buscar nome do plano */}
                     <TableCell className="text-right">
                       <div className="flex gap-2 justify-end">
                         <Button
@@ -193,12 +225,10 @@ export default function MonthlyParkersPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                ))
+                )}
               </TableBody>
             </Table>
-            {applications.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">No pending applications at this time.</div>
-            )}
           </CardContent>
         </Card>
 
@@ -218,21 +248,33 @@ export default function MonthlyParkersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredParkers.map((parker) => (
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8">Carregando...</TableCell>
+                  </TableRow>
+                ) : filteredParkers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                      No monthly parkers found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                filteredParkers.map((parker) => (
                   <TableRow key={parker.id}>
-                    <TableCell className="font-medium">{parker.fullName}</TableCell>
-                    <TableCell>{parker.licensePlate}</TableCell>
-                    <TableCell>{parker.currentPlan}</TableCell>
+                    <TableCell className="font-medium">{parker.nome_completo}</TableCell>
+                    <TableCell>{parker.veiculo?.placa || "N/A"}</TableCell>
+                    {/* --- AGORA VAI FUNCIONAR --- */}
+                    <TableCell>{parker.assinatura?.plano.nome || "N/A"}</TableCell>
                     <TableCell>
                       <Badge
-                        variant={parker.status === "Active" ? "default" : "destructive"}
-                        className={
-                          parker.status === "Active"
-                            ? "bg-green-100 text-green-800 hover:bg-green-100"
-                            : "bg-red-100 text-red-800 hover:bg-red-100"
-                        }
+                          variant={parker.assinatura?.status === "ATIVA" ? "default" : "destructive"}
+                          className={
+                            parker.assinatura?.status === "ATIVA"
+                              ? "bg-green-100 text-green-800 hover:bg-green-100"
+                              : "bg-red-100 text-red-800 hover:bg-red-100"
+                          }
                       >
-                        {parker.status}
+                        {parker.assinatura?.status || "Sem Assinatura"}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
@@ -247,14 +289,10 @@ export default function MonthlyParkersPage() {
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
+                ))
+                )}
               </TableBody>
             </Table>
-            {filteredParkers.length === 0 && (
-              <div className="text-center py-8 text-muted-foreground">
-                No monthly parkers found matching your search.
-              </div>
-            )}
           </CardContent>
         </Card>
 

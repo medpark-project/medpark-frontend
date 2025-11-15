@@ -1,20 +1,29 @@
 "use client"
-import { useState } from "react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { useState, useEffect } from "react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { CreditCard, Banknote, Smartphone, CheckCircle, QrCode } from "lucide-react"
+import api from "@/lib/api"
+
+interface ParkedVehicle {
+  id: number
+  veiculo_placa: string
+  hora_entrada: string
+}
+
+interface ExitDetails {
+  hora_entrada: string
+  hora_saida: string
+  valor_pago: number
+  veiculo_placa: string
+}
 
 interface PaymentModalProps {
   isOpen: boolean
   onClose: () => void
-  vehicle: {
-    id: string
-    licensePlate: string
-    entryTime: Date
-    duration: string
-  } | null
+  vehicle: ParkedVehicle | null
   onPaymentComplete: (vehicleId: string) => void
 }
 
@@ -22,19 +31,49 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
 
-  if (!vehicle) return null
+  const [exitDetails, setExitDetails] = useState<ExitDetails | null>(null)
+  const [error, setError] = useState("")
 
-  // Calculate fee based on duration (simplified calculation)
-  const calculateFee = (duration: string) => {
-    const hours = Number.parseFloat(duration.replace(/[^\d.]/g, "")) || 0
-    const baseRate = 8.5 // R$ 8.50 per hour
-    return (hours * baseRate).toFixed(2)
+  useEffect(() => {
+    if (vehicle && isOpen) {
+      processVehicleExit(vehicle.veiculo_placa)
+    }
+  }, [vehicle, isOpen])
+
+  const processVehicleExit = async (placa: string) => {
+    setIsProcessing(true)
+    setError("")
+    setExitDetails(null)
+
+    try {
+      const response = await api.put(`/estacionamento/saida/${placa}`)
+      
+      setExitDetails(response.data)
+      
+    } catch (err: any) {
+      console.error("Erro ao registrar saída:", err)
+      setError(err.response?.data?.detail || "Não foi possível processar a saída.")
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
-  const totalFee = calculateFee(vehicle.duration)
-  const currentTime = new Date()
+  const handleClose = () => {
+    setExitDetails(null)
+    setSelectedPaymentMethod("cash")
+    setError("")
+    onClose()
+  }
 
-  const formatDateTime = (date: Date) => {
+  const handlePaymentReceived = () => {
+    if (vehicle) {
+      onPaymentComplete(vehicle.id.toString())
+    }
+    handleClose()
+  }
+
+  const formatDateTime = (isoString: string) => {
+    const date = new Date(isoString)
     return (
       date.toLocaleDateString("pt-BR") +
       " " +
@@ -43,20 +82,6 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
         minute: "2-digit",
       })
     )
-  }
-
-  const handlePaymentComplete = async () => {
-    if (!selectedPaymentMethod) return
-
-    setIsProcessing(true)
-
-    // Simulate payment processing
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-
-    onPaymentComplete(vehicle.id)
-    setIsProcessing(false)
-    setSelectedPaymentMethod(null)
-    onClose()
   }
 
   const paymentMethods = [
@@ -78,24 +103,23 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-muted-foreground">License Plate:</span>
               <Badge variant="outline" className="text-base">
-                {vehicle.licensePlate}
+                {vehicle?.veiculo_placa}
               </Badge>
             </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-muted-foreground">Entry:</span>
-              <span className="text-sm">{formatDateTime(vehicle.entryTime)}</span>
-            </div>
+            {exitDetails && (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">Entry:</span>
+                  <span className="text-sm">{formatDateTime(exitDetails.hora_entrada)}</span>
+                </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-muted-foreground">Exit:</span>
-              <span className="text-sm">{formatDateTime(currentTime)}</span>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-muted-foreground">Duration:</span>
-              <Badge variant="secondary">{vehicle.duration}</Badge>
-            </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-muted-foreground">Exit:</span>
+                  <span className="text-sm">{formatDateTime(exitDetails.hora_saida)}</span>
+                </div>
+              </>
+            )}
           </div>
 
           <Separator />
@@ -103,7 +127,13 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
           {/* Total Amount */}
           <div className="text-center py-4">
             <p className="text-sm text-muted-foreground mb-2">Total to Pay</p>
-            <p className="text-4xl font-bold text-primary">R$ {totalFee}</p>
+            {isProcessing && <p className="text-2xl font-bold text-muted-foreground">Calculating...</p>}
+            {error && <p className="text-lg font-bold text-red-600">{error}</p>}
+            {exitDetails && (
+              <p className="text-4xl font-bold text-primary">
+                R$ {exitDetails.valor_pago.toFixed(2)}
+              </p>
+            )}
           </div>
 
           <Separator />
@@ -146,8 +176,8 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
 
           {/* Complete Payment Button */}
           <Button
-            onClick={handlePaymentComplete}
-            disabled={!selectedPaymentMethod || isProcessing}
+            onClick={handlePaymentReceived}
+            disabled={isProcessing || !exitDetails || !selectedPaymentMethod}
             className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90"
           >
             {isProcessing ? (

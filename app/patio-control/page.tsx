@@ -1,5 +1,5 @@
 "use client"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -9,77 +9,93 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge"
 import { Plus, Clock } from "lucide-react"
 import { PaymentModal } from "@/components/payment-modal"
+import api from "@/lib/api"
 
 interface ParkedVehicle {
-  id: string
-  licensePlate: string
-  entryTime: Date
-  duration: string
+  id: number
+  veiculo_placa: string
+  hora_entrada: string
 }
 
 export default function PatioControlPage() {
   const [licensePlate, setLicensePlate] = useState("")
+  const [tipoVeiculoId, setTipoVeiculoId] = useState("1") // padrao = carro
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("")
+
   const [selectedVehicle, setSelectedVehicle] = useState<ParkedVehicle | null>(null)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
 
-  const [parkedVehicles, setParkedVehicles] = useState<ParkedVehicle[]>([
-    {
-      id: "1",
-      licensePlate: "ABC-1234",
-      entryTime: new Date("2025-01-09T09:30:00"),
-      duration: "2h 15m",
-    },
-    {
-      id: "2",
-      licensePlate: "XYZ-5678",
-      entryTime: new Date("2025-01-09T11:45:00"),
-      duration: "45m",
-    },
-    {
-      id: "3",
-      licensePlate: "DEF-9012",
-      entryTime: new Date("2025-01-09T08:15:00"),
-      duration: "3h 30m",
-    },
-  ])
+  const [parkedVehicles, setParkedVehicles] = useState<ParkedVehicle[]>([])
 
-  const handleRegisterEntry = () => {
+  const fetchParkedVehicles = async () => {
+    try {
+      const response = await api.get("/estacionamento/ativos")
+      setParkedVehicles(response.data)
+    } catch (err) {
+      console.error("Erro ao buscar veículos no pátio:", err)
+      setError("Não foi possível carregar os veículos do pátio.")
+    }
+  }
+
+  useEffect(() => {
+    fetchParkedVehicles()
+    // (Você também pode adicionar uma chamada para /tipos-veiculo para preencher um <select>)
+  }, []) 
+
+  const handleRegisterEntry = async () => {
     if (!licensePlate.trim()) return
+    setIsLoading(true)
+    setError("")
 
-    const newVehicle: ParkedVehicle = {
-      id: Date.now().toString(),
-      licensePlate: licensePlate.toUpperCase(),
-      entryTime: new Date(),
-      duration: "0m",
+    try {
+      // Chama a API de entrada
+      await api.post("/estacionamento/entrada", {
+        veiculo_placa: licensePlate.toUpperCase(),
+        tipo_veiculo_id: parseInt(tipoVeiculoId) // Envia o tipo (assumindo '1' por enquanto)
+      })
+      
+      // Se deu certo: limpa o campo e recarrega a lista de veículos
+      setLicensePlate("")
+      await fetchParkedVehicles() // Atualiza a tabela
+      
+    } catch (err: any) {
+      if (err.response && err.response.data && err.response.data.detail) {
+        setError(err.response.data.detail) // Ex: "Este veículo já possui um registro..."
+      } else {
+        setError("Erro ao registrar a entrada.")
+      }
+    } finally {
+      setIsLoading(false)
     }
-
-    setParkedVehicles([...parkedVehicles, newVehicle])
-    setLicensePlate("")
   }
 
-  const handleRegisterExit = (vehicleId: string) => {
-    const vehicle = parkedVehicles.find((v) => v.id === vehicleId)
-    if (vehicle) {
-      setSelectedVehicle(vehicle)
-      setIsPaymentModalOpen(true)
-    }
+  const handleRegisterExit = (vehicle: ParkedVehicle) => {
+    setSelectedVehicle(vehicle)
+    setIsPaymentModalOpen(true)
   }
 
-  const handlePaymentComplete = (vehicleId: string) => {
-    setParkedVehicles((vehicles) => vehicles.filter((v) => v.id !== vehicleId))
+  const handlePaymentComplete = () => {
     setIsPaymentModalOpen(false)
     setSelectedVehicle(null)
+    fetchParkedVehicles() 
+  }
+  
+  const calculateDuration = (entryTime: string) => {
+      const entry = new Date(entryTime + "Z");
+      const now = new Date();
+      const diffMs = now.getTime() - entry.getTime();
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffMins = Math.floor((diffMs % 3600000) / 60000);
+      return `${diffHours}h ${diffMins}m`;
   }
 
-  const formatEntryTime = (date: Date) => {
-    return (
-      date.toLocaleDateString("pt-BR") +
-      " " +
-      date.toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    )
+  const formatEntryTime = (isoString: string) => {
+    const date = new Date(isoString + "Z");
+    return date.toLocaleString("pt-BR", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit"
+    })
   }
 
   return (
@@ -124,6 +140,8 @@ export default function PatioControlPage() {
                 Confirm Entry
               </Button>
             </div>
+            {/* Mostra erros de validação, como "veículo já está no pátio" */}
+            {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
           </CardContent>
         </Card>
 
@@ -153,24 +171,24 @@ export default function PatioControlPage() {
                   {parkedVehicles.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        No vehicles currently parked
+                        {isLoading ? "Loading vehicles..." : "No vehicles currently parked"}
                       </TableCell>
                     </TableRow>
                   ) : (
                     parkedVehicles.map((vehicle) => (
                       <TableRow key={vehicle.id}>
                         <TableCell className="font-medium">
-                          <Badge variant="outline">{vehicle.licensePlate}</Badge>
+                          <Badge variant="outline">{vehicle.veiculo_placa}</Badge>
                         </TableCell>
-                        <TableCell>{formatEntryTime(vehicle.entryTime)}</TableCell>
+                        <TableCell>{formatEntryTime(new Date(vehicle.hora_entrada))}</TableCell>
                         <TableCell>
-                          <Badge variant="secondary">{vehicle.duration}</Badge>
+                          <Badge variant="secondary">{calculateDuration(vehicle.hora_entrada)}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleRegisterExit(vehicle.id)}
+                            onClick={() => handleRegisterExit(vehicle)}
                             className="hover:bg-primary hover:text-primary-foreground"
                           >
                             Register Exit
