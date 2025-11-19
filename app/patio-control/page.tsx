@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { Plus, Clock } from "lucide-react"
+import { Plus, Clock, Loader2 } from "lucide-react"
 import { PaymentModal } from "@/components/payment-modal"
 import api from "@/lib/api"
+import { useToast } from "@/hooks/use-toast" // Importa o Toast
 
 interface ParkedVehicle {
   id: number
@@ -19,22 +20,27 @@ interface ParkedVehicle {
 
 export default function PatioControlPage() {
   const [licensePlate, setLicensePlate] = useState("")
-  const [tipoVeiculoId, setTipoVeiculoId] = useState("1") // padrao = carro
+  const [tipoVeiculoId, setTipoVeiculoId] = useState("1")
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingList, setIsLoadingList] = useState(true) // Loading separado para a lista
   const [error, setError] = useState("")
 
   const [selectedVehicle, setSelectedVehicle] = useState<ParkedVehicle | null>(null)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
 
   const [parkedVehicles, setParkedVehicles] = useState<ParkedVehicle[]>([])
+  const { toast } = useToast()
 
   const fetchParkedVehicles = async () => {
+    setIsLoadingList(true) // Usa o loading da lista
     try {
       const response = await api.get("/estacionamento/ativos")
       setParkedVehicles(response.data)
     } catch (err) {
       console.error("Erro ao buscar veículos no pátio:", err)
       setError("Não foi possível carregar os veículos do pátio.")
+    } finally {
+      setIsLoadingList(false) // Desliga o loading da lista
     }
   }
 
@@ -134,10 +140,9 @@ export default function PatioControlPage() {
               </div>
               <Button
                 onClick={handleRegisterEntry}
-                disabled={!licensePlate.trim()}
-                className="bg-primary hover:bg-primary/90"
+                disabled={!licensePlate.trim() || isLoading}
               >
-                Confirm Entry
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm Entry"}
               </Button>
             </div>
             {/* Mostra erros de validação, como "veículo já está no pátio" */}
@@ -159,19 +164,18 @@ export default function PatioControlPage() {
           <CardContent>
             <div className="rounded-md border">
               <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>License Plate</TableHead>
-                    <TableHead>Entry Time</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
+                {/* ... (TableHeader está perfeito) ... */}
                 <TableBody>
-                  {parkedVehicles.length === 0 ? (
+                  {isLoadingList ? ( // Usa o loading da lista
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+                      </TableCell>
+                    </TableRow>
+                  ) : parkedVehicles.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        {isLoading ? "Loading vehicles..." : "No vehicles currently parked"}
+                        No vehicles currently parked
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -180,7 +184,7 @@ export default function PatioControlPage() {
                         <TableCell className="font-medium">
                           <Badge variant="outline">{vehicle.veiculo_placa}</Badge>
                         </TableCell>
-                        <TableCell>{formatEntryTime(new Date(vehicle.hora_entrada))}</TableCell>
+                        <TableCell>{formatEntryTime(vehicle.hora_entrada)}</TableCell>
                         <TableCell>
                           <Badge variant="secondary">{calculateDuration(vehicle.hora_entrada)}</Badge>
                         </TableCell>
@@ -188,8 +192,8 @@ export default function PatioControlPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleRegisterExit(vehicle)}
-                            className="hover:bg-primary hover:text-primary-foreground"
+                            onClick={() => handleRegisterExit(vehicle)} // <-- A mágica acontece aqui
+                            disabled={isLoading} // Desabilita se o form de entrada estiver carregando
                           >
                             Register Exit
                           </Button>
@@ -212,6 +216,7 @@ export default function PatioControlPage() {
           }}
           vehicle={selectedVehicle}
           onPaymentComplete={handlePaymentComplete}
+          toast={toast} // Passa o 'toast' para o modal
         />
       </div>
     </DashboardLayout>

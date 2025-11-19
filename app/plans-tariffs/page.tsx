@@ -1,76 +1,114 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Pencil, Trash2, Plus } from "lucide-react"
+import { Pencil, Trash2, Plus, Loader2 } from "lucide-react"
 import { AddEditPlanModal } from "@/components/add-edit-plan-modal"
+import api from "@/lib/api" // Importa nosso "gerente" de API
+import { useToast } from "@/hooks/use-toast"
 
-interface Plan {
+interface TipoVeiculo {
   id: number
-  name: string
-  price: string
-  description: string
+  nome: string
+  tarifa_hora: number
+}
+
+interface Plano {
+  id: number
+  nome: string
+  preco_mensal: number
+  descricao: string
 }
 
 export default function PlansTariffsPage() {
-  const [hourlyRates, setHourlyRates] = useState({
-    motorcycle: "8,00",
-    car: "12,00",
-    suv: "18,00",
-  })
-
-  const [monthlyPlans, setMonthlyPlans] = useState<Plan[]>([
-    {
-      id: 1,
-      name: "Plano Diurno (Funcionários)",
-      price: "R$ 180,00",
-      description: "Acesso de Seg a Sex, das 07h às 19h.",
-    },
-    {
-      id: 2,
-      name: "Plano Noturno (Plantonistas)",
-      price: "R$ 150,00",
-      description: "Acesso todos os dias, das 19h às 07h.",
-    },
-    {
-      id: 3,
-      name: "Plano Integral 24h (Médicos)",
-      price: "R$ 250,00",
-      description: "Acesso ilimitado 24/7.",
-    },
-  ])
+  const { toast } = useToast()
+  const [isLoading, setIsLoading] = useState(true)
+  const [isSavingRates, setIsSavingRates] = useState(false)
+  
+  // Nossos estados agora são para os objetos da API
+  const [tiposVeiculo, setTiposVeiculo] = useState<TipoVeiculo[]>([])
+  const [monthlyPlans, setMonthlyPlans] = useState<Plano[]>([])
 
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [editingPlan, setEditingPlan] = useState<Plan | null>(null)
+  const [editingPlan, setEditingPlan] = useState<Plano | null>(null)
 
-  const handleRateChange = (type: string, value: string) => {
-    setHourlyRates((prev) => ({
-      ...prev,
-      [type]: value,
-    }))
-  }
-
-  const handleSaveRates = () => {
-    // Handle save logic here
-    console.log("Saving hourly rates:", hourlyRates)
-  }
-
-  const handleEditPlan = (planId: number) => {
-    const plan = monthlyPlans.find((p) => p.id === planId)
-    if (plan) {
-      setEditingPlan(plan)
-      setIsModalOpen(true)
+  const fetchPageData = async () => {
+    setIsLoading(true)
+    try {
+      // Busca as duas listas em paralelo (são rotas públicas)
+      const [tiposRes, planosRes] = await Promise.all([
+        api.get("/tipos-veiculo/"),
+        api.get("/planos-mensalista/")
+      ])
+      setTiposVeiculo(tiposRes.data)
+      setMonthlyPlans(planosRes.data)
+    } catch (error) {
+      console.error("Erro ao buscar dados da página:", error)
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível carregar os dados." })
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const handleDeletePlan = (planId: number) => {
-    // Handle delete plan logic here
-    console.log("Deleting plan:", planId)
+  // --- MUDANÇA: Busca os dados quando a página carrega ---
+  useEffect(() => {
+    fetchPageData()
+  }, []) // O array vazio [] faz isso rodar uma vez
+
+  // --- MUDANÇA: Lógica de salvar Tarifas conectada ---
+  const handleRateChange = (id: number, value: string) => {
+    // Converte a string (ex: "12,00") para um número
+    const tarifa = parseFloat(value.replace(",", ".")) || 0
+    setTiposVeiculo((prev) =>
+      prev.map((tipo) => (tipo.id === id ? { ...tipo, tarifa_hora: tarifa } : tipo))
+    )
+  }
+
+  const handleSaveRates = async () => {
+    setIsSavingRates(true)
+    try {
+      // Cria um array de promessas, uma para cada PUT
+      const updatePromises = tiposVeiculo.map((tipo) =>
+        api.put(`/tipos-veiculo/${tipo.id}`, {
+          nome: tipo.nome, // O PUT do tipo_veiculo espera o nome
+          tarifa_hora: tipo.tarifa_hora
+        })
+      )
+      // Executa todas as atualizações em paralelo
+      await Promise.all(updatePromises)
+      
+      toast({ title: "Sucesso!", description: "Tarifas por hora atualizadas." })
+    } catch (error) {
+      console.error("Erro ao salvar tarifas:", error)
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível salvar as tarifas." })
+    } finally {
+      setIsSavingRates(false)
+    }
+  }
+
+  // --- MUDANÇA: Lógica de CRUD de Planos conectada ---
+  const handleEditPlan = (plan: Plano) => { // Recebe o objeto 'plano'
+    setEditingPlan(plan)
+    setIsModalOpen(true)
+  }
+
+  const handleDeletePlan = async (planId: number) => {
+    if (confirm("Tem certeza que deseja deletar este plano?")) {
+      try {
+        await api.delete(`/planos-mensalista/${planId}`)
+        toast({ title: "Sucesso!", description: "Plano deletado." })
+        // Atualiza a lista removendo o item deletado
+        setMonthlyPlans((prev) => prev.filter((p) => p.id !== planId))
+      } catch (error) {
+        console.error("Erro ao deletar plano:", error)
+        toast({ variant: "destructive", title: "Erro", description: "Não foi possível deletar o plano." })
+      }
+    }
   }
 
   const handleAddNewPlan = () => {
@@ -78,20 +116,40 @@ export default function PlansTariffsPage() {
     setIsModalOpen(true)
   }
 
-  const handleSavePlan = (planData: Omit<Plan, "id"> & { id?: number }) => {
-    if (planData.id) {
-      // Editing existing plan
-      setMonthlyPlans((prev) => prev.map((plan) => (plan.id === planData.id ? { ...planData, id: planData.id } : plan)))
-    } else {
-      // Adding new plan
-      const newId = Math.max(...monthlyPlans.map((p) => p.id)) + 1
-      setMonthlyPlans((prev) => [...prev, { ...planData, id: newId }])
+  const handleSavePlan = async (planData: Omit<Plano, "id"> & { id?: number }) => {
+    try {
+      if (planData.id) {
+        // Editando plano existente
+        await api.put(`/planos-mensalista/${planData.id}`, planData)
+      } else {
+        // Adicionando novo plano
+        await api.post("/planos-mensalista/", planData)
+      }
+      
+      toast({ title: "Sucesso!", description: `Plano ${planData.id ? 'atualizado' : 'criado'}.` })
+      fetchPageData() // Recarrega todos os dados
+      
+    } catch (error) {
+      console.error("Erro ao salvar plano:", error)
+      toast({ variant: "destructive", title: "Erro", description: "Não foi possível salvar o plano." })
     }
   }
 
   const handleCloseModal = () => {
     setIsModalOpen(false)
     setEditingPlan(null)
+  }
+
+  const formatRate = (rate: number) => {
+    return rate.toFixed(2).replace(".", ",")
+  }
+  
+  // Função para formatar o preço para a tabela (ex: 180.0 -> "R$ 180,00")
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    }).format(value)
   }
 
   return (
@@ -112,54 +170,29 @@ export default function PlansTariffsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="motorcycle-rate">Motorcycle Rate (/hr)</Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
-                  <Input
-                    id="motorcycle-rate"
-                    type="text"
-                    value={hourlyRates.motorcycle}
-                    onChange={(e) => handleRateChange("motorcycle", e.target.value)}
-                    className="pl-8"
-                    placeholder="8,00"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="car-rate">Car Rate (/hr)</Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
-                  <Input
-                    id="car-rate"
-                    type="text"
-                    value={hourlyRates.car}
-                    onChange={(e) => handleRateChange("car", e.target.value)}
-                    className="pl-8"
-                    placeholder="12,00"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="suv-rate">SUV / Van Rate (/hr)</Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
-                  <Input
-                    id="suv-rate"
-                    type="text"
-                    value={hourlyRates.suv}
-                    onChange={(e) => handleRateChange("suv", e.target.value)}
-                    className="pl-8"
-                    placeholder="18,00"
-                  />
-                </div>
-              </div>
+              {isLoading ? (
+                <p className="text-muted-foreground">Carregando tarifas...</p>
+              ) : (
+                tiposVeiculo.map((tipo) => (
+                  <div className="space-y-2" key={tipo.id}>
+                    <Label htmlFor={`rate-${tipo.id}`}>{tipo.nome} Rate (/hr)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                      <Input
+                        id={`rate-${tipo.id}`}
+                        type="text"
+                        value={formatRate(tipo.tarifa_hora)}
+                        onChange={(e) => handleRateChange(tipo.id, e.target.value)}
+                        className="pl-8"
+                      />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
 
-            <Button onClick={handleSaveRates} className="bg-[#A0E7E5] hover:bg-[#8DD3D1] text-gray-900">
-              Save Changes
+            <Button onClick={handleSaveRates} disabled={isSavingRates}>
+              {isSavingRates ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save Changes"}
             </Button>
           </CardContent>
         </Card>
@@ -168,7 +201,7 @@ export default function PlansTariffsPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <CardTitle>Monthly Subscription Plans</CardTitle>
-            <Button onClick={handleAddNewPlan} className="bg-[#A0E7E5] hover:bg-[#8DD3D1] text-gray-900">
+            <Button onClick={handleAddNewPlan}>
               <Plus className="h-4 w-4 mr-2" />
               Add New Plan
             </Button>
@@ -176,41 +209,38 @@ export default function PlansTariffsPage() {
           <CardContent>
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Plan Name</TableHead>
-                  <TableHead>Monthly Price</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
+                {/* ... (Cabeçalho da Tabela) ... */}
               </TableHeader>
               <TableBody>
-                {monthlyPlans.map((plan) => (
-                  <TableRow key={plan.id}>
-                    <TableCell className="font-medium">{plan.name}</TableCell>
-                    <TableCell>{plan.price}</TableCell>
-                    <TableCell className="max-w-md">{plan.description}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditPlan(plan.id)}
-                          className="h-8 w-8 p-0"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeletePlan(plan.id)}
-                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center py-8">Carregando planos...</TableCell>
+                  </TableRow>
+                ) : monthlyPlans.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                      No monthly plans created yet.
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  monthlyPlans.map((plan) => (
+                    <TableRow key={plan.id}>
+                      <TableCell className="font-medium">{plan.nome}</TableCell>
+                      <TableCell>{formatCurrency(plan.preco_mensal)}</TableCell>
+                      <TableCell className="max-w-md">{plan.descricao}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="sm" onClick={() => handleEditPlan(plan)} className="h-8 w-8 p-0">
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeletePlan(plan.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>

@@ -4,8 +4,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { CreditCard, Banknote, Smartphone, CheckCircle, QrCode } from "lucide-react"
+import { CreditCard, Banknote, Smartphone, CheckCircle, QrCode, Loader2 } from "lucide-react"
 import api from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface ParkedVehicle {
   id: number
@@ -13,9 +14,10 @@ interface ParkedVehicle {
   hora_entrada: string
 }
 
+// Interface para a RESPOSTA DO CÁLCULO
 interface ExitDetails {
   hora_entrada: string
-  hora_saida: string
+  hora_saida_calculada: string // O backend nos diz a hora do cálculo
   valor_pago: number
   veiculo_placa: string
 }
@@ -25,39 +27,51 @@ interface PaymentModalProps {
   onClose: () => void
   vehicle: ParkedVehicle | null
   onPaymentComplete: (vehicleId: string) => void
+  toast: (options: { title: string, description: string, variant?: "default" | "destructive" }) => void
 }
 
 export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: PaymentModalProps) {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
-
+  const [isSaving, setIsSaving] = useState(false)
   const [exitDetails, setExitDetails] = useState<ExitDetails | null>(null)
   const [error, setError] = useState("")
+  const [isCalculating, setIsCalculating] = useState(false)
 
   useEffect(() => {
     if (vehicle && isOpen) {
-      processVehicleExit(vehicle.veiculo_placa)
+      calculateFee(vehicle.veiculo_placa)
     }
   }, [vehicle, isOpen])
 
-  const processVehicleExit = async (placa: string) => {
-    setIsProcessing(true)
+  const calculateFee = async (placa: string) => {
+    setIsCalculating(true)
     setError("")
     setExitDetails(null)
 
     try {
-      const response = await api.put(`/estacionamento/saida/${placa}`)
-      
-      setExitDetails(response.data)
-      
+      const response = await api.get(`/estacionamento/saida/calcular/${placa}`)
+      const details: ExitDetails = response.data
+
+      if (details.valor_pago === 0) {
+        await handlePaymentReceived(0.0) // Passa 0.0 como valor
+        toast({
+          title: "Saída de Mensalista Registrada",
+          description: `Veículo ${placa} liberado.`,
+        })
+      } else {
+        // É avulso! Salva os detalhes para mostrar no modal.
+        setExitDetails(details)
+      }
+
     } catch (err: any) {
-      console.error("Erro ao registrar saída:", err)
-      setError(err.response?.data?.detail || "Não foi possível processar a saída.")
+      console.error("Erro ao calcular valor:", err)
+      setError(err.response?.data?.detail || "Não foi possível calcular o valor.")
     } finally {
-      setIsProcessing(false)
+      setIsCalculating(false) // Termina o loading inicial
     }
   }
 
+  
   const handleClose = () => {
     setExitDetails(null)
     setSelectedPaymentMethod("cash")
@@ -65,23 +79,37 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
     onClose()
   }
 
-  const handlePaymentReceived = () => {
-    if (vehicle) {
-      onPaymentComplete(vehicle.id.toString())
+  const handlePaymentReceived = async (valor?: number) => {
+    // Se o valor não foi passado, pega o dos detalhes
+    const valorFinal = valor !== undefined ? valor : exitDetails?.valor_pago
+    
+    if (!vehicle || valorFinal === undefined) return
+    
+    setIsSaving(true)
+    setError("")
+    
+    try {
+        await api.put(`/estacionamento/saida/${vehicle.veiculo_placa}`, {
+           valor_pago: valorFinal
+        })
+        
+        onPaymentComplete(vehicle.id.toString())
+        handleClose()
+        
+    } catch (err: any) {
+        console.error("Erro ao registrar saída:", err)
+        setError(err.response?.data?.detail || "Não foi possível processar a saída.")
+    } finally {
+        setIsSaving(false)
     }
-    handleClose()
   }
 
-  const formatDateTime = (isoString: string) => {
-    const date = new Date(isoString)
-    return (
-      date.toLocaleDateString("pt-BR") +
-      " " +
-      date.toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    )
+  const formatDateTime = (isoString: string | undefined) => {
+    if (!isoString) return "N/A"
+    const date = new Date(isoString + "Z"); // Força UTC
+    return date.toLocaleString("pt-BR", {
+      hour: "2-digit", minute: "2-digit"
+    })
   }
 
   const paymentMethods = [
@@ -113,10 +141,9 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
                   <span className="text-sm font-medium text-muted-foreground">Entry:</span>
                   <span className="text-sm">{formatDateTime(exitDetails.hora_entrada)}</span>
                 </div>
-
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium text-muted-foreground">Exit:</span>
-                  <span className="text-sm">{formatDateTime(exitDetails.hora_saida)}</span>
+                  <span className="text-sm">{formatDateTime(exitDetails.hora_saida_calculada)}</span>
                 </div>
               </>
             )}
@@ -127,7 +154,7 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
           {/* Total Amount */}
           <div className="text-center py-4">
             <p className="text-sm text-muted-foreground mb-2">Total to Pay</p>
-            {isProcessing && <p className="text-2xl font-bold text-muted-foreground">Calculating...</p>}
+            {isCalculating && <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />}
             {error && <p className="text-lg font-bold text-red-600">{error}</p>}
             {exitDetails && (
               <p className="text-4xl font-bold text-primary">
@@ -174,13 +201,12 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
             </div>
           )}
 
-          {/* Complete Payment Button */}
           <Button
-            onClick={handlePaymentReceived}
-            disabled={isProcessing || !exitDetails || !selectedPaymentMethod}
+            onClick={() => handlePaymentReceived()} // Chama sem argumentos
+            disabled={isCalculating || isSaving || !exitDetails || !selectedPaymentMethod}
             className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90"
           >
-            {isProcessing ? (
+            {isSaving ? (
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 Processing...

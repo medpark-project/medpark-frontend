@@ -240,14 +240,6 @@ export function MonthlyParkerDetailsModal({ isOpen, onClose, parker }: MonthlyPa
                   <Edit className="h-4 w-4" /> Edit Subscriber
                 </Button>
               </Link>
-              <Button
-                className="gap-2 flex-1 bg-primary hover:bg-primary/90"
-                onClick={handleSendPaymentHistory}
-                disabled={isSendingEmail}
-              >
-                {isSendingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                {isSendingEmail ? "Sending..." : "Send Payment History to Email"}
-              </Button>
             </div>
           </div>
         )}

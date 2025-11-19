@@ -2,62 +2,144 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MedParkLogo } from "@/components/medpark-logo"
-import { CheckCircle, Upload } from "lucide-react"
+import { CheckCircle, Upload, Loader2 } from "lucide-react"
 import Link from "next/link"
+import api from "@/lib/api" // Importa nosso "gerente" de API
+import { useToast } from "@/hooks/use-toast" // Usaremos o toast para erros
+
+interface Plano {
+  id: number
+  nome: string
+}
+interface TipoVeiculo {
+  id: number
+  nome: string
+}
 
 export default function ApplyMonthlyPage() {
+  const { toast } = useToast()
+  
+  // --- MUDANÇA: Nomes de campos alinhados com a API ---
   const [formData, setFormData] = useState({
-    fullName: "",
+    nome_completo: "",
     email: "",
-    phone: "",
+    telefone: "",
     cpf: "",
     rg: "",
-    licensePlate: "",
-    selectedPlan: "",
-    personalDocument: null as File | null,
-    proofOfEmployment: null as File | null,
+    placa_veiculo: "",
+    modelo_veiculo: "", // Adicionado
+    cor_veiculo: "",    // Adicionado
+    plano_id: "",         // Renomeado
+    tipo_veiculo_id: "",  // Adicionado
   })
+  
+  const [personalDocument, setPersonalDocument] = useState<File | null>(null)
+  const [proofOfEmployment, setProofOfEmployment] = useState<File | null>(null)
+  
   const [isSubmitted, setIsSubmitted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("") // Para erros de formulário
+
+  // --- NOVOS ESTADOS para os dropdowns ---
+  const [planos, setPlanos] = useState<Plano[]>([])
+  const [tiposVeiculo, setTiposVeiculo] = useState<TipoVeiculo[]>([])
+
+  useEffect(() => {
+    const fetchPrerequisites = async () => {
+      try {
+        // Lembre-se que estas rotas são públicas!
+        const [planosRes, tiposVeiculoRes] = await Promise.all([
+          api.get("/planos-mensalista/"),
+          api.get("/tipos-veiculo/")
+        ]);
+        setPlanos(planosRes.data);
+        setTiposVeiculo(tiposVeiculoRes.data);
+      } catch (err) {
+        console.error("Falha ao buscar planos ou tipos de veículo", err)
+        setError("Não foi possível carregar os planos. Tente novamente mais tarde.")
+      }
+    }
+    fetchPrerequisites()
+  }, []) // O array vazio [] faz isso rodar uma vez no carregamento
 
   const formatCPF = (value: string) => {
-    const numbers = value.replace(/\D/g, "")
+    const numbers = value.replace(/\D/g, "").slice(0, 11)
     return numbers.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")
   }
 
   const handleInputChange = (field: string, value: string) => {
+    let formattedValue = value
     if (field === "cpf") {
-      value = formatCPF(value)
+      formattedValue = formatCPF(value)
+    } else if (field === "placa_veiculo") {
+      formattedValue = value.toUpperCase()
     }
-    setFormData((prev) => ({
-      ...prev,
-      [field]: field === "licensePlate" ? value.toUpperCase() : value,
-    }))
+    setFormData((prev) => ({ ...prev, [field]: formattedValue }))
   }
 
-  const handleFileChange = (field: string, file: File | null) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: file,
-    }))
+  const handleFileChange = (field: "personalDocument" | "proofOfEmployment", file: File | null) => {
+    if (field === "personalDocument") setPersonalDocument(file)
+    else if (field === "proofOfEmployment") setProofOfEmployment(file)
   }
 
+  // --- MUDANÇA: handleSubmit agora chama a API ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
+    setError("")
 
-    // Simulate form submission
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    if (!personalDocument || !proofOfEmployment) {
+      setError("Ambos os documentos são obrigatórios.")
+      setIsLoading(false)
+      return
+    }
 
-    setIsSubmitted(true)
-    setIsLoading(false)
+    // 1. Monta o FormData para a API
+    const apiFormData = new FormData();
+    
+    // Adiciona todos os campos de texto do estado
+    // (O Pydantic no backend vai ignorar 'modelo_veiculo' e 'cor_veiculo' se estiverem vazios)
+    Object.entries(formData).forEach(([key, value]) => {
+      if (value) {
+        apiFormData.append(key, value);
+      }
+    });
+    
+    // Adiciona os arquivos
+    apiFormData.append("doc_pessoal", personalDocument);
+    apiFormData.append("doc_comprovante", proofOfEmployment);
+
+    try {
+      // 2. Envia para o endpoint de Solicitação (NÃO precisa de token)
+      await api.post("/solicitacoes-mensalista/", apiFormData, {
+        headers: {
+          // 'Content-Type': 'multipart/form-data' é definido automaticamente
+          // pelo axios/navegador ao enviar FormData
+        }
+      })
+      
+      // 3. Sucesso!
+      setIsSubmitted(true)
+
+    } catch (err: any) {
+      console.error("Erro ao enviar solicitação:", err)
+      if (err.response?.data?.detail) {
+        // Mostra erros de validação da API (ex: "placa já cadastrada")
+        const detail = err.response.data.detail
+        setError(Array.isArray(detail) ? detail[0].msg : String(detail));
+      } else {
+        setError("Ocorreu um erro desconhecido. Tente novamente.")
+      }
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -90,99 +172,73 @@ export default function ApplyMonthlyPage() {
               {!isSubmitted ? (
                 <form onSubmit={handleSubmit} className="space-y-6">
                   <div className="space-y-2">
-                    <Label htmlFor="fullName">Full Name</Label>
-                    <Input
-                      id="fullName"
-                      type="text"
-                      placeholder="Enter your full name"
-                      value={formData.fullName}
-                      onChange={(e) => handleInputChange("fullName", e.target.value)}
-                      required
-                    />
+                    <Label htmlFor="nome_completo">Full Name</Label>
+                    <Input id="nome_completo" value={formData.nome_completo} onChange={(e) => handleInputChange("nome_completo", e.target.value)} required />
                   </div>
-
                   <div className="space-y-2">
                     <Label htmlFor="email">Email Address</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="Enter your email address"
-                      value={formData.email}
-                      onChange={(e) => handleInputChange("email", e.target.value)}
-                      required
-                    />
+                    <Input id="email" type="email" value={formData.email} onChange={(e) => handleInputChange("email", e.target.value)} required />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="phone">Phone Number</Label>
-                    <Input
-                      id="phone"
-                      type="tel"
-                      placeholder="Enter your phone number"
-                      value={formData.phone}
-                      onChange={(e) => handleInputChange("phone", e.target.value)}
-                      required
-                    />
+                    <Label htmlFor="telefone">Phone Number</Label>
+                    <Input id="telefone" type="tel" value={formData.telefone} onChange={(e) => handleInputChange("telefone", e.target.value)} />
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="cpf">CPF</Label>
-                      <Input
-                        id="cpf"
-                        type="text"
-                        placeholder="000.000.000-00"
-                        value={formData.cpf}
-                        onChange={(e) => handleInputChange("cpf", e.target.value)}
-                        maxLength={14}
-                        required
-                      />
+                      <Input id="cpf" value={formData.cpf} onChange={(e) => handleInputChange("cpf", e.target.value)} maxLength={14} required />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="rg">RG</Label>
-                      <Input
-                        id="rg"
-                        type="text"
-                        placeholder="Enter your RG number"
-                        value={formData.rg}
-                        onChange={(e) => handleInputChange("rg", e.target.value)}
-                        required
-                      />
+                      <Input id="rg" value={formData.rg} onChange={(e) => handleInputChange("rg", e.target.value)} required />
                     </div>
                   </div>
 
+                  {/* --- CAMPOS DO VEÍCULO (Adicionados/Corrigidos) --- */}
                   <div className="space-y-2">
-                    <Label htmlFor="licensePlate">License Plate</Label>
-                    <Input
-                      id="licensePlate"
-                      type="text"
-                      placeholder="Enter your primary vehicle's license plate"
-                      value={formData.licensePlate}
-                      onChange={(e) => handleInputChange("licensePlate", e.target.value)}
-                      required
-                    />
+                    <Label htmlFor="placa_veiculo">License Plate</Label>
+                    <Input id="placa_veiculo" value={formData.placa_veiculo} onChange={(e) => handleInputChange("placa_veiculo", e.target.value)} required />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="modelo_veiculo">Vehicle Model</Label>
+                      <Input id="modelo_veiculo" value={formData.modelo_veiculo} onChange={(e) => handleInputChange("modelo_veiculo", e.target.value)} placeholder="e.g., Honda Civic" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="cor_veiculo">Vehicle Color</Label>
+                      <Input id="cor_veiculo" value={formData.cor_veiculo} onChange={(e) => handleInputChange("cor_veiculo", e.target.value)} placeholder="e.g., White" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="tipo_veiculo_id">Vehicle Type</Label>
+                      <Select value={formData.tipo_veiculo_id} onValueChange={(value) => handleInputChange("tipo_veiculo_id", value)} required>
+                        <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                        <SelectContent>
+                          {tiposVeiculo.map((tipo) => (
+                            <SelectItem key={tipo.id} value={String(tipo.id)}>
+                              {tipo.nome}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
-                  {/* Plan selection dropdown */}
+                  {/* --- SELEÇÃO DE PLANO (Dinâmico) --- */}
                   <div className="space-y-2">
-                    <Label htmlFor="selectedPlan">Select your desired plan</Label>
-                    <Select
-                      value={formData.selectedPlan}
-                      onValueChange={(value) => handleInputChange("selectedPlan", value)}
-                      required
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose a monthly plan" />
-                      </SelectTrigger>
+                    <Label htmlFor="plano_id">Select your desired plan</Label>
+                    <Select value={formData.plano_id} onValueChange={(value) => handleInputChange("plano_id", value)} required>
+                      <SelectTrigger><SelectValue placeholder="Choose a monthly plan" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="plano-diurno">Plano Diurno (Funcionários)</SelectItem>
-                        <SelectItem value="plano-noturno">Plano Noturno (Plantonistas)</SelectItem>
-                        <SelectItem value="plano-integral">Plano Integral 24h (Médicos)</SelectItem>
+                        {planos.map((plano) => (
+                          <SelectItem key={plano.id} value={String(plano.id)}>
+                            {plano.nome}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
-                  {/* Personal document upload */}
+                  {/* --- Upload de Arquivos (Conectado) --- */}
                   <div className="space-y-2">
                     <Label htmlFor="personalDocument">Personal Document (ID card or Driver's License)</Label>
                     <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center hover:border-muted-foreground/50 transition-colors">
@@ -197,16 +253,12 @@ export default function ApplyMonthlyPage() {
                       <label htmlFor="personalDocument" className="cursor-pointer">
                         <Upload className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                         <p className="text-sm font-medium text-foreground mb-1">
-                          {formData.personalDocument
-                            ? formData.personalDocument.name
-                            : "Click to upload or drag and drop"}
+                          {personalDocument ? personalDocument.name : "Click to upload or drag and drop"}
                         </p>
                         <p className="text-xs text-muted-foreground">Accepted files: .png, .jpg, .pdf</p>
                       </label>
                     </div>
                   </div>
-
-                  {/* Proof of employment upload */}
                   <div className="space-y-2">
                     <Label htmlFor="proofOfEmployment">Proof of employment/link with the hospital</Label>
                     <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center hover:border-muted-foreground/50 transition-colors">
@@ -221,16 +273,19 @@ export default function ApplyMonthlyPage() {
                       <label htmlFor="proofOfEmployment" className="cursor-pointer">
                         <Upload className="h-8 w-8 text-muted-foreground mx-auto mb-2" />
                         <p className="text-sm font-medium text-foreground mb-1">
-                          {formData.proofOfEmployment
-                            ? formData.proofOfEmployment.name
-                            : "Click to upload or drag and drop"}
+                          {proofOfEmployment ? proofOfEmployment.name : "Click to upload or drag and drop"}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          (e.g., employee badge, official statement). Accepted files: .png, .jpg, .pdf
+                          (e.g., employee badge). Accepted files: .png, .jpg, .pdf
                         </p>
                       </label>
                     </div>
                   </div>
+
+                  {/* Mostra erros de validação da API */}
+                  {error && (
+                    <p className="text-sm text-red-600 text-center">{error}</p>
+                  )}
 
                   <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isLoading}>
                     {isLoading ? "Sending Application..." : "Send Application Request"}

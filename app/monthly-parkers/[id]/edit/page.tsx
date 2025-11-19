@@ -1,7 +1,7 @@
 "use client"
 import { useState, useEffect } from "react"
 import type React from "react"
-import { ArrowLeft, Eye, Upload, Loader2 } from "lucide-react"
+import { ArrowLeft, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -12,7 +12,7 @@ import Link from "next/link"
 import { useRouter, useParams } from "next/navigation"
 import api from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
-import { format } from "date-fns" // Usaremos para formatar a data
+import { format } from "date-fns"
 
 // --- Interfaces para os dados ---
 interface Plano {
@@ -29,6 +29,21 @@ interface Assinatura {
   data_inicio: string
   status: string
   plano: { id: number; nome: string; preco_mensal: number }
+}
+
+interface MensalistaDetails {
+  id: number
+  nome_completo: string
+  email: string
+  telefone: string | null
+  cpf: string
+  rg: string
+  veiculo: {
+    placa: string
+    modelo: string | null
+    cor: string | null
+    tipo: { id: number; nome: string }
+  } | null
 }
 
 // Interface para o estado do formulário
@@ -71,6 +86,7 @@ export default function EditMonthlyParkerPage() {
     const fetchPageData = async () => {
       setIsLoading(true)
       try {
+        // 1. Busca os dados das listas e do mensalista
         const [planosRes, tiposVeiculoRes, mensalistaRes] = await Promise.all([
           api.get("/planos-mensalista/"),
           api.get("/tipos-veiculo/"),
@@ -80,19 +96,26 @@ export default function EditMonthlyParkerPage() {
         setPlanos(planosRes.data);
         setTiposVeiculo(tiposVeiculoRes.data);
         
-        const mensalista = mensalistaRes.data
+        const mensalista: MensalistaDetails = mensalistaRes.data
         
-        // Tenta buscar a assinatura ativa separadamente
-        let assinatura: Assinatura | null = null
+        // 2. Busca o HISTÓRICO de assinaturas
+        let assinaturaMaisRecente: Assinatura | null = null
         try {
-          const assinaturaRes = await api.get(`/assinaturas/mensalista/${mensalistaId}/ativa`)
-          assinatura = assinaturaRes.data
+          const historicoRes = await api.get(`/assinaturas/mensalista/${mensalistaId}/historico`)
+          const historico: Assinatura[] = historicoRes.data
+          
+          if (historico && historico.length > 0) {
+            // (Assumindo que o backend ordena por data_inicio desc, pegamos a primeira)
+            // Se não, teríamos que ordenar aqui.
+            assinaturaMaisRecente = historico[0] 
+          }
         } catch (e) {
-          // Ignora o erro 404 (sem assinatura ativa)
+          console.error("Erro ao buscar histórico de assinaturas:", e)
+          // Não é um erro fatal, o usuário pode não ter nenhuma.
         }
 
-        // Preenche o formulário com todos os dados
-        const planoIdString = String(assinatura?.plano?.id || "")
+        // 3. Preenche o formulário com a assinatura mais recente (ativa ou não)
+        const planoIdString = String(assinaturaMaisRecente?.plano?.id || "")
         setFormData({
           nome_completo: mensalista.nome_completo,
           email: mensalista.email,
@@ -103,10 +126,10 @@ export default function EditMonthlyParkerPage() {
           modelo_veiculo: mensalista.veiculo?.modelo || "",
           cor_veiculo: mensalista.veiculo?.cor || "",
           tipo_veiculo_id: String(mensalista.veiculo?.tipo?.id || ""),
-          assinatura_id: assinatura?.id || null,
+          assinatura_id: assinaturaMaisRecente?.id || null,
           plano_id: planoIdString,
-          status_assinatura: assinatura?.status || "INATIVA",
-          data_inicio_assinatura: assinatura?.data_inicio || "",
+          status_assinatura: assinaturaMaisRecente?.status || "INATIVA", // Padrão INATIVA se não tiver
+          data_inicio_assinatura: assinaturaMaisRecente?.data_inicio || "",
         })
         
         setOriginalPlanoId(planoIdString) // Salva o plano original
@@ -122,26 +145,19 @@ export default function EditMonthlyParkerPage() {
     fetchPageData()
   }, [mensalistaId])
 
-  // --- LÓGICA DE SUBMISSÃO ATUALIZADA ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.plano_id) {
-        setError("O plano de estacionamento é obrigatório.")
-        return
-    }
-    
     setIsSaving(true)
     setError("")
 
     try {
-      // 1. Atualiza o Mensalista (nome, email, telefone)
+      // 1. Atualiza o Mensalista e o Veículo (sempre)
       await api.put(`/mensalistas/${mensalistaId}`, {
         nome_completo: formData.nome_completo,
         email: formData.email,
         telefone: formData.telefone,
       })
 
-      // 2. Atualiza o Veículo (modelo, cor)
       if (formData.placa_veiculo) {
         await api.put(`/veiculos/${formData.placa_veiculo}`, {
           modelo: formData.modelo_veiculo,
@@ -149,43 +165,47 @@ export default function EditMonthlyParkerPage() {
         })
       }
 
-      // 3. LÓGICA DE MUDANÇA DE PLANO
+      // 2. LÓGICA DE MUDANÇA DE ASSINATURA
       const planoMudou = String(formData.plano_id) !== String(originalPlanoId)
       
-      if (planoMudou && formData.assinatura_id) {
-        // 3a. Cancela a assinatura antiga
+      if (planoMudou) {
+        // Se o plano mudou, o fluxo é sempre: cancelar a antiga (se houver) e criar uma nova.
+        if (formData.assinatura_id) {
+          // 2a. Cancela a assinatura antiga
+          await api.put(`/assinaturas/${formData.assinatura_id}`, {
+            status: "CANCELADA",
+            data_fim: format(new Date(), "yyyy-MM-dd"), // Data de hoje
+          })
+        }
+        
+        // 2b. Cria a nova assinatura (se um plano foi selecionado)
+        if (formData.plano_id) {
+          await api.post("/assinaturas/", {
+            mensalista_id: parseInt(mensalistaId),
+            plano_id: parseInt(formData.plano_id),
+            data_inicio: format(new Date(), "yyyy-MM-dd"), // Data de hoje
+            // O status padrão da nova assinatura já é 'ATIVA' no backend
+          })
+        }
+      } else if (formData.assinatura_id) {
+        // 3. Se NÃO mudou o plano, apenas atualiza o status da assinatura existente
         await api.put(`/assinaturas/${formData.assinatura_id}`, {
-          status: "CANCELADA",
-          data_fim: format(new Date(), "yyyy-MM-dd"), // Data de hoje
+          status: formData.status_assinatura,
+          // A data_fim será preenchida pelo backend se o status for CANCELADA/INATIVA
         })
-        
-        // 3b. Cria a nova assinatura
-        await api.post("/assinaturas/", {
-          mensalista_id: parseInt(mensalistaId),
-          plano_id: parseInt(formData.plano_id),
-          data_inicio: format(new Date(), "yyyy-MM-dd"), // Data de hoje
-        })
-        
-      } else if (planoMudou && !formData.assinatura_id) {
-         // 3c. Se não tinha assinatura, apenas cria a nova
+      } else if (!formData.assinatura_id && formData.plano_id) {
+        // 4. Se não tinha assinatura antes e agora selecionou um plano
          await api.post("/assinaturas/", {
           mensalista_id: parseInt(mensalistaId),
           plano_id: parseInt(formData.plano_id),
           data_inicio: format(new Date(), "yyyy-MM-dd"),
-        })
-      } else if (!planoMudou && formData.assinatura_id) {
-        // 3d. Se não mudou o plano, só atualiza o status (Ex: Ativa/Inativa)
-        await api.put(`/assinaturas/${formData.assinatura_id}`, {
-          status: formData.status_assinatura,
         })
       }
 
       toast({ title: "Sucesso!", description: "Dados do mensalista atualizados." })
       router.push("/monthly-parkers")
 
-    } catch (err: any) {
-      console.error("Erro ao salvar mensalista:", err)
-      setError(err.response?.data?.detail || "Ocorreu um erro desconhecido.")
+    } catch (err: any) { setError(err.response?.data?.detail || "Ocorreu um erro desconhecido.")
     } finally {
       setIsSaving(false)
     }
@@ -195,8 +215,6 @@ export default function EditMonthlyParkerPage() {
     if (field === "cpf" || field === "rg") return;
     setFormData((prev) => ({ ...prev, [field]: value }))
   }
-  
-  // (Lógica de documentos não está aqui, pois foi feita na solicitação)
 
   if (isLoading) {
     return (
@@ -303,13 +321,14 @@ export default function EditMonthlyParkerPage() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="startDate">Subscription Start Date (Não editável)</Label>
+                {/* Corrigido para formatar a data corretamente */}
                 <Input id="startDate" type="date" value={formData.data_inicio_assinatura ? format(new Date(formData.data_inicio_assinatura), "yyyy-MM-dd") : ""} readOnly disabled className="bg-muted/50" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="status">Status</Label>
                 <Select value={formData.status_assinatura || ""} onValueChange={(value) => handleInputChange("status_assinatura", value)}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Select a status" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ATIVA">Ativa</SelectItem>
@@ -321,6 +340,11 @@ export default function EditMonthlyParkerPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Mensagem de Erro */}
+        {error && (
+            <p className="text-sm text-red-600 text-center">{error}</p>
+        )}
 
         {/* Action Buttons */}
         <div className="flex gap-4 justify-end">
