@@ -1,27 +1,62 @@
 "use client"
+
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { LayoutDashboard, Car, Users, Settings, FileText, LogOut, User } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MedParkLogo } from "./medpark-logo"
 import { cn } from "@/lib/utils"
+import { jwtDecode } from "jwt-decode"
 
-const navigation = [
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ["Admin", "Operator"] },
-  { name: "Patio Control", href: "/patio-control", icon: Car, roles: ["Admin", "Operator"] },
-  { name: "Monthly Parkers", href: "/monthly-parkers", icon: Users, roles: ["Admin", "Operator"] },
-  { name: "Plans & Tariffs", href: "/plans-tariffs", icon: Settings, roles: ["Admin"] },
-  { name: "Reports", href: "/reports", icon: FileText, roles: ["Admin"] },
-]
-
-interface DashboardSidebarProps {
-  userRole?: "Admin" | "Operator"
+interface TokenPayload {
+  sub: string
+  profile: "ADMIN" | "OPERATOR"
 }
 
-export function DashboardSidebar({ userRole = "Admin" }: DashboardSidebarProps) {
-  const pathname = usePathname()
+const navigation = [
+  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "OPERATOR"] },
+  { name: "Patio Control", href: "/patio-control", icon: Car, roles: ["ADMIN", "OPERATOR"] },
+  { name: "Monthly Parkers", href: "/monthly-parkers", icon: Users, roles: ["ADMIN", "OPERATOR"] },
+  { name: "Plans & Tariffs", href: "/plans-tariffs", icon: Settings, roles: ["ADMIN"] },
+]
 
-  const visibleNavigation = navigation.filter((item) => item.roles.includes(userRole))
+
+export function DashboardSidebar() {
+  const pathname = usePathname()
+  const router = useRouter()
+  
+  const [userRole, setUserRole] = useState<"ADMIN" | "OPERATOR" | null>(null)
+  const [userName, setUserName] = useState("Loading...")
+  
+  useEffect(() => {
+
+    const token = localStorage.getItem("medpark_token")
+    
+    if (token) {
+      try {
+        const decoded = jwtDecode<TokenPayload>(token)
+        setUserRole(decoded.profile)
+        const nameFromEmail = decoded.sub.split("@")[0]
+        setUserName(nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1))
+        
+      } catch (error) {
+        console.error("Token inválido:", error)
+        handleLogout()
+      }
+    } else {
+      router.push("/")
+    }
+  }, [router])
+
+  const handleLogout = () => {
+    localStorage.removeItem("medpark_token")
+    router.push("/")
+  }
+
+  const visibleNavigation = userRole 
+    ? navigation.filter((item) => item.roles.includes(userRole)) 
+    : []
 
   return (
     <div className="flex h-screen w-64 flex-col bg-sidebar border-r border-sidebar-border">
@@ -56,15 +91,16 @@ export function DashboardSidebar({ userRole = "Admin" }: DashboardSidebarProps) 
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-sidebar-accent">
             <User className="h-4 w-4" />
           </div>
-          <div className="flex-1">
-            <p className="font-medium">Operator</p>
-            <p className="text-xs text-sidebar-foreground/60">{userRole} User</p>
+          <div className="flex-1 overflow-hidden">
+            <p className="font-medium truncate">{userName}</p>
+            <p className="text-xs text-sidebar-foreground/60">
+              {userRole === "ADMIN" ? "Administrator" : "Operator"}
+            </p>
           </div>
-          <Link href="/">
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </Link>
+
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={handleLogout}>
+            <LogOut className="h-4 w-4" />
+          </Button>
         </div>
       </div>
     </div>

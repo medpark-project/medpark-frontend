@@ -9,90 +9,140 @@ import { Card, CardContent } from "@/components/ui/card"
 import { MedParkLogo } from "@/components/medpark-logo"
 import { LoginModal } from "@/components/login-modal"
 import { SelfServicePaymentModal } from "@/components/self-service-payment-modal"
-import { Search, CreditCard, Users, Clock, CheckCircle } from "lucide-react"
+import { Search, CreditCard, Users, Clock, CheckCircle, Loader2 } from "lucide-react"
 import Link from "next/link"
+import api from "@/lib/api" // Importa nossa API
 
 export default function HomePage() {
   const [casualPlate, setCasualPlate] = useState("")
   const [monthlyPlate, setMonthlyPlate] = useState("")
+  
   const [showLoginModal, setShowLoginModal] = useState(false)
+  
   const [showSelfServicePayment, setShowSelfServicePayment] = useState(false)
-  const [paymentData, setPaymentData] = useState<any>(null)
+  const [paymentIdentifier, setPaymentIdentifier] = useState("") // Placa ou ID
   const [paymentUserType, setPaymentUserType] = useState<"casual" | "monthly">("casual")
+  
   const [showCasualDetails, setShowCasualDetails] = useState(false)
-  const [showMonthlyDetails, setShowMonthlyDetails] = useState(false)
   const [casualTicketData, setCasualTicketData] = useState<any>(null)
+  const [isLoadingCasual, setIsLoadingCasual] = useState(false)
+  const [isLoadingMonthly, setIsLoadingMonthly] = useState(false)
+  const [casualError, setCasualError] = useState("")
+
+  const [showMonthlyDetails, setShowMonthlyDetails] = useState(false)
   const [monthlySubscriptionData, setMonthlySubscriptionData] = useState<any>(null)
 
-  const handleCasualCheck = (e: React.FormEvent) => {
+  const handleCasualCheck = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (casualPlate.trim()) {
-      const mockTicketData = {
-        licensePlate: casualPlate,
-        entryTime: "09/01/2025 09:30",
-        duration: "2h 15m",
-        totalAmount: "R$ 18,50",
-      }
-      setCasualTicketData(mockTicketData)
-      setShowCasualDetails(true)
-    }
-  }
+    if (!casualPlate.trim()) return
 
-  const handleMonthlyCheck = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (monthlyPlate.trim()) {
-      const mockSubscriptionData = {
-        licensePlate: monthlyPlate,
-        userName: "João Silva",
-        plan: "Plano Integral 24h",
-        status: "Active",
-        nextBillDate: "10/01/2025",
-        hasPendingBill: Math.random() > 0.5,
-        pendingAmount: "R$ 150,00",
+    setIsLoadingCasual(true)
+    setCasualError("")
+    setShowCasualDetails(false)
+
+    try {
+      const response = await api.get(`/estacionamento/saida/calcular/${casualPlate.toUpperCase()}`)
+      const data = response.data
+
+      if (data.valor_pago === 0) {
+        setCasualError("Este veículo é de um mensalista ou está no período de carência. Saída liberada.")
+        return
       }
-      setMonthlySubscriptionData(mockSubscriptionData)
-      setShowMonthlyDetails(true)
+
+      setCasualTicketData({
+        licensePlate: data.veiculo_placa,
+        entryTime: new Date(data.hora_entrada + "Z").toLocaleString(), 
+        duration: "Calculated at exit", 
+        totalAmount: `R$ ${data.valor_pago.toFixed(2)}`,
+        rawAmount: data.valor_pago // Guardamos o valor real
+      })
+      
+      setShowCasualDetails(true)
+
+    } catch (err: any) {
+      console.error("Erro ao buscar ticket:", err)
+      if (err.response?.status === 404) {
+         setCasualError("Veículo não encontrado no pátio.")
+      } else {
+         setCasualError("Erro ao consultar o sistema.")
+      }
+    } finally {
+      setIsLoadingCasual(false)
     }
   }
 
   const handleCasualPayment = () => {
-    const data = {
-      licensePlate: casualTicketData?.licensePlate || "",
-      duration: casualTicketData?.duration || "",
-      totalAmount: casualTicketData?.totalAmount || "",
-    }
-    setPaymentData(data)
+
+    setPaymentIdentifier(casualTicketData.licensePlate)
     setPaymentUserType("casual")
     setShowSelfServicePayment(true)
   }
-
-  const handleMonthlyPayment = () => {
-    const data = {
-      licensePlate: monthlySubscriptionData?.licensePlate || "",
-      totalAmount: monthlySubscriptionData?.pendingAmount || "",
-      description: "Monthly parking bill - September 2025",
-    }
-    setPaymentData(data)
-    setPaymentUserType("monthly")
-    setShowSelfServicePayment(true)
-  }
-
+  
   const resetCasualFlow = () => {
     setShowCasualDetails(false)
     setCasualPlate("")
     setCasualTicketData(null)
+    setCasualError("")
+  }
+
+  const handleMonthlyCheck = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!monthlyPlate.trim()) return
+
+    setIsLoadingMonthly(true)
+    
+    try {
+      const response = await api.get(`/mensalistas/publico/status/${monthlyPlate.toUpperCase()}`)
+      const data = response.data
+      
+      let monthName = "";
+      if (data.data_vencimento) {
+          const date = new Date(data.data_vencimento);
+          monthName = date.toLocaleString('en-US', { month: 'long' });
+      }
+      
+      setMonthlySubscriptionData({
+        licensePlate: monthlyPlate.toUpperCase(),
+        userName: data.nome_completo,
+        plan: data.plano_nome,
+        status: data.status_assinatura,
+        nextBillDate: data.data_vencimento ? new Date(data.data_vencimento).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : "N/A",
+        hasPendingBill: !!data.fatura_pendente_id,
+        pendingAmount: data.valor_pendente ? `R$ ${data.valor_pendente.toFixed(2)}` : "",
+        faturaId: data.fatura_pendente_id,
+        monthName: monthName 
+      })
+      
+      setShowMonthlyDetails(true)
+
+    } catch (err: any) {
+       console.error("Erro ao buscar assinatura:", err)
+       alert("Mensalista não encontrado ou erro no sistema.")
+    } finally {
+       setIsLoadingMonthly(false)
+    }
   }
 
   const resetMonthlyFlow = () => {
-    setShowMonthlyDetails(false)
-    setMonthlyPlate("")
-    setMonthlySubscriptionData(null)
+     setShowMonthlyDetails(false)
+     setMonthlyPlate("")
   }
 
   const handleSelfServicePaymentClose = () => {
     setShowSelfServicePayment(false)
     resetCasualFlow()
     resetMonthlyFlow()
+  }
+
+  const handleMonthlyPayment = () => {
+    
+    if (monthlySubscriptionData?.faturaId) {
+        setPaymentIdentifier(String(monthlySubscriptionData.faturaId)) // Converte ID para string
+        setPaymentUserType("monthly")
+        setShowSelfServicePayment(true)
+    } else {
+        console.error("Erro: Nenhuma fatura pendente encontrada para pagar.")
+    }
   }
 
   return (
@@ -129,9 +179,12 @@ export default function HomePage() {
                     />
                     <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   </div>
-                  <Button type="submit" className="w-full bg-primary hover:bg-primary/90">
-                    <CreditCard className="mr-2 h-4 w-4" />
-                    Check Ticket
+                  
+                  {casualError && <p className="text-sm text-red-600">{casualError}</p>}
+                  
+                  <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isLoadingCasual}>
+                    {isLoadingCasual ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <CreditCard className="mr-2 h-4 w-4" />}
+                    {isLoadingCasual ? "Checking..." : "Check Ticket"}
                   </Button>
                 </form>
               ) : (
@@ -148,10 +201,6 @@ export default function HomePage() {
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-muted-foreground">Entry Time:</span>
                       <span className="font-medium">{casualTicketData?.entryTime}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-muted-foreground">Duration:</span>
-                      <span className="font-medium">{casualTicketData?.duration}</span>
                     </div>
                   </div>
 
@@ -198,9 +247,9 @@ export default function HomePage() {
                     />
                     <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   </div>
-                  <Button type="submit" variant="default" className="w-full bg-primary">
-                    <Users className="mr-2 h-4 w-4" />
-                    Check Subscription
+                  <Button type="submit" variant="default" className="w-full bg-primary" disabled={isLoadingMonthly}>
+                    {isLoadingMonthly ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Users className="mr-2 h-4 w-4" />}
+                    {isLoadingMonthly ? "Checking..." : "Check Subscription"}
                   </Button>
                 </form>
               ) : (
@@ -234,7 +283,9 @@ export default function HomePage() {
                       <div className="border-t pt-3">
                         <div className="text-center text-orange-600 mb-2">
                           <Clock className="h-5 w-5 mx-auto mb-1" />
-                          <p className="text-sm font-medium">Your bill for September is due</p>
+                          <p className="text-sm font-medium">
+                              Your bill for {monthlySubscriptionData.monthName} is due
+                          </p>
                         </div>
                         <div className="text-center">
                           <div className="text-xl font-bold text-orange-600">
@@ -293,12 +344,17 @@ export default function HomePage() {
       </footer>
 
       <LoginModal open={showLoginModal} onOpenChange={setShowLoginModal} />
-      {paymentData && (
+      {showSelfServicePayment && (
         <SelfServicePaymentModal
           isOpen={showSelfServicePayment}
           onClose={handleSelfServicePaymentClose}
-          paymentData={paymentData}
+          identifier={paymentIdentifier} 
           userType={paymentUserType}
+          licensePlateDisplay={
+            paymentUserType === 'casual' 
+              ? paymentIdentifier // Para avulso, o identificador É a placa
+              : monthlySubscriptionData?.licensePlate // Para mensalista, pegamos do estado da busca
+          }
         />
       )}
     </div>

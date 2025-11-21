@@ -148,7 +148,6 @@ export function MonthlyParkerDetailsModal({ isOpen, onClose, parker }: MonthlyPa
             Erro: Não foi possível carregar os dados. Por favor, tente novamente.
           </div>
         ) : (
-          // --- CONTEÚDO CONECTADO ---
           <div className="space-y-6">
             {/* Personal Details - AGORA CONECTADO */}
             <Card>
@@ -168,14 +167,17 @@ export function MonthlyParkerDetailsModal({ isOpen, onClose, parker }: MonthlyPa
                     <p className="font-medium">{detailedData.cpf}</p>
                   </div>
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Phone</label>
-                  <p className="font-medium">{detailedData.telefone || "N/A"}</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Phone</label>
+                    <p className="font-medium">{detailedData.telefone || "N/A"}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Email</label>
+                    <p className="font-medium">{detailedData.email}</p>
+                  </div>
                 </div>
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Email</label>
-                  <p className="font-medium">{detailedData.email}</p>
-                </div>
+                
               </CardContent>
             </Card>
 
@@ -211,6 +213,7 @@ export function MonthlyParkerDetailsModal({ isOpen, onClose, parker }: MonthlyPa
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Status</label>
+                    <br></br>
                     <Badge variant={detailedData.assinatura?.status === "ATIVA" ? "default" : "destructive"}>
                       {detailedData.assinatura?.status || "N/A"}
                     </Badge>
@@ -218,10 +221,6 @@ export function MonthlyParkerDetailsModal({ isOpen, onClose, parker }: MonthlyPa
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Start Date</label>
                     <p className="font-medium">{formatDate(detailedData.assinatura?.data_inicio)}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-muted-foreground">Next Billing</label>
-                    <p className="font-medium">{"N/A"}</p> {/* Este campo não está na nossa API ainda */}
                   </div>
                   <div>
                     <label className="text-sm font-medium text-muted-foreground">Monthly Fee</label>

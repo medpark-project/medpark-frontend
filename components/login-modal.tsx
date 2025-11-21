@@ -15,7 +15,7 @@ interface LoginModalProps {
   onOpenChange: (open: boolean) => void
 }
 
-const API_AUTH_URL = "http://localhost:8001"
+const API_AUTH_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || "http://localhost:8001"
 
 export function LoginModal({ open, onOpenChange }: LoginModalProps) {
   const [email, setEmail] = useState("")

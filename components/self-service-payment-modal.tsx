@@ -6,30 +6,31 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent } from "@/components/ui/card"
-import { PaymentConfirmationModal, PaymentConfirmationMessages } from "@/components/payment-confirmation-modal"
 import { QrCode, CreditCard, Copy, Loader2, CheckCircle } from "lucide-react"
-
-interface PaymentData {
-  licensePlate: string
-  duration?: string
-  totalAmount: string
-  description?: string
-}
+import api from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
 interface SelfServicePaymentModalProps {
   isOpen: boolean
   onClose: () => void
-  paymentData: PaymentData
+  identifier: string 
   userType: "casual" | "monthly"
+  licensePlateDisplay?: string
+}
+
+interface PaymentDetails {
+  totalAmount: string
+  description: string
+  rawAmount: number
+  licensePlate?: string 
+  duration?: string
 }
 
 type PaymentView = "summary" | "pix" | "card" | "success"
 
-export function SelfServicePaymentModal({ isOpen, onClose, paymentData, userType }: SelfServicePaymentModalProps) {
+export function SelfServicePaymentModal({ isOpen, onClose, identifier, userType, licensePlateDisplay }: SelfServicePaymentModalProps) {
   const [currentView, setCurrentView] = useState<PaymentView>("summary")
   const [isProcessing, setIsProcessing] = useState(false)
-  const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [successMessage, setSuccessMessage] = useState("")
   const [pixCopyFeedback, setPixCopyFeedback] = useState(false)
   const [cardForm, setCardForm] = useState({
     cardNumber: "",
@@ -37,50 +38,116 @@ export function SelfServicePaymentModal({ isOpen, onClose, paymentData, userType
     expiryDate: "",
     cvc: "",
   })
+  const [paymentDetails, setPaymentDetails] = useState<PaymentDetails | null>(null)
+  const [loadingData, setLoadingData] = useState(false)
+  const [apiError, setApiError] = useState("")
 
-  // Reset state when modal opens/closes
   useEffect(() => {
     if (isOpen) {
       setCurrentView("summary")
       setIsProcessing(false)
-      setCardForm({
-        cardNumber: "",
-        nameOnCard: "",
-        expiryDate: "",
-        cvc: "",
-      })
-    }
-  }, [isOpen])
+      setCardForm({ cardNumber: "", nameOnCard: "", expiryDate: "", cvc: "" })
+      setPaymentDetails(null)
 
-  const handlePixPayment = () => {
+      if (identifier) {
+        fetchPaymentData()
+      }
+    }
+  }, [isOpen, identifier])
+
+  const fetchPaymentData = async () => {
+    setLoadingData(true)
+    setApiError("")
+    try {
+      if (userType === "casual") {
+        const response = await api.get(`/estacionamento/saida/calcular/${identifier}`)
+        const data = response.data
+      
+        const entry = new Date(data.hora_entrada + "Z")
+        const exit = new Date(data.hora_saida_calculada + "Z") 
+        const diffMs = exit.getTime() - entry.getTime()
+        const totalMinutes = Math.floor(diffMs / 60000)
+        
+        const hours = Math.floor(totalMinutes / 60)
+        const minutes = totalMinutes % 60
+        setPaymentDetails({
+          totalAmount: `R$ ${data.valor_pago.toFixed(2)}`,
+          description: entry.toLocaleString(),
+          rawAmount: data.valor_pago,
+          licensePlate: data.veiculo_placa,
+          duration: `${hours}h ${minutes}m`
+        })
+        
+      } else {
+        const response = await api.get(`/pagamentos/publico/${identifier}`)
+        const fatura = response.data
+
+        const valorCobrar = fatura.valor_cobranca || 0
+        const formattedDate = formatMonthYear(fatura.mes_referencia);
+
+        setPaymentDetails({
+          totalAmount: `R$ ${valorCobrar.toFixed(2)}`,
+          description: formattedDate,
+          rawAmount: valorCobrar,
+          licensePlate: licensePlateDisplay || "Subscriber"
+        })
+      }
+    } catch (err) {
+      console.error("Erro ao buscar dados de pagamento", err)
+      setApiError("Could not load payment details. Please try again.")
+    } finally {
+      setLoadingData(false)
+    }
+  }
+
+  const processPaymentInBackend = async () => {
+      if (!paymentDetails) return
+
+      if (userType === "casual") {
+        await api.put(`/estacionamento/saida/${identifier}`, {
+          valor_pago: paymentDetails.rawAmount
+        })
+      } else {
+        const hoje = new Date().toISOString().split('T')[0]
+        await api.put(`/pagamentos/publico/${identifier}/pagar`, {
+          status: "PAGO",
+          valor_pago: paymentDetails.rawAmount,
+          data_pagamento: hoje
+        })
+      }
+  }
+
+  const handlePixPayment = async () => {
     setCurrentView("pix")
-    // Simulate PIX payment confirmation after 4 seconds
-    setTimeout(() => {
-      const message =
-        userType === "casual"
-          ? PaymentConfirmationMessages.casualUser(paymentData.licensePlate)
-          : PaymentConfirmationMessages.monthlyParker("September")
-      setSuccessMessage(message)
-      setShowSuccessModal(true)
-      onClose()
+    
+    setTimeout(async () => {
+      try {
+        await processPaymentInBackend() // Confirma no backend
+
+        setCurrentView("success")
+      } catch (err) {
+        console.error("Erro ao confirmar PIX", err)
+        alert("Payment confirmation failed.")
+      }
     }, 4000)
   }
 
   const handleCardPayment = async () => {
     setIsProcessing(true)
-    // Simulate card payment processing
-    setTimeout(() => {
-      setIsProcessing(false)
-      const message =
-        userType === "casual"
-          ? PaymentConfirmationMessages.casualUser(paymentData.licensePlate)
-          : PaymentConfirmationMessages.monthlyParker("September")
-      setSuccessMessage(message)
-      setShowSuccessModal(true)
-      onClose()
-    }, 3000)
-  }
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      
+      await processPaymentInBackend()
 
+      setCurrentView("success")
+      
+    } catch (err) {
+      console.error("Erro ao processar cartão", err)
+      alert("Card payment failed. Please try again.")
+    } finally {
+      setIsProcessing(false)
+    }
+  }
   const copyPixCode = () => {
     const pixCode =
       "00020126580014br.gov.bcb.pix013636c4e1c8-7e4a-4c3a-9f2a-8b5d7e9f1a2b52040000530398654041850620240101MedPark6304A1B2"
@@ -115,6 +182,18 @@ export function SelfServicePaymentModal({ isOpen, onClose, paymentData, userType
     return v
   }
 
+  const formatMonthYear = (mesReferencia: string | number) => {
+
+    const str = String(mesReferencia);
+    
+    const year = parseInt(str.substring(0, 4));
+    const month = parseInt(str.substring(4, 6));
+
+    const date = new Date(year, month - 1, 1);
+
+    return date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  }
+
   const handleCardInputChange = (field: string, value: string) => {
     let formattedValue = value
     if (field === "cardNumber") {
@@ -124,67 +203,75 @@ export function SelfServicePaymentModal({ isOpen, onClose, paymentData, userType
     } else if (field === "cvc") {
       formattedValue = value.replace(/[^0-9]/gi, "").substring(0, 3)
     }
-
-    setCardForm((prev) => ({
-      ...prev,
-      [field]: formattedValue,
-    }))
+    setCardForm((prev) => ({ ...prev, [field]: formattedValue }))
   }
 
-  const renderSummaryView = () => (
-    <div className="space-y-6">
-      <DialogHeader>
-        <DialogTitle className="text-xl font-semibold text-center">Payment</DialogTitle>
-      </DialogHeader>
+  const renderSummaryView = () => {
+    if (loadingData) return <div className="p-8 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto" /> Loading...</div>
+    if (apiError) return <div className="p-8 text-center text-red-600">{apiError}</div>
+    if (!paymentDetails) return null
 
-      {/* Payment Summary */}
-      <div className="space-y-4">
-        <div className="bg-muted/30 rounded-lg p-4 space-y-3">
-          <div className="flex justify-between items-center">
-            <span className="text-sm text-muted-foreground">License Plate:</span>
-            <span className="font-medium">{paymentData.licensePlate}</span>
+    return (
+      <div className="space-y-6">
+        <DialogHeader>
+          <DialogTitle className="text-xl font-semibold text-center">Payment</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-muted-foreground">License Plate:</span>
+              <span className="font-medium">{paymentDetails.licensePlate}</span>
+            </div>
+
+            {paymentDetails.duration && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Duration:</span>
+                <span className="font-medium">{paymentDetails.duration}</span>
+              </div>
+            )}
+            {userType == "casual" && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Entry:</span>
+                <span className="font-medium text-right text-sm">{paymentDetails.description}</span>
+              </div>
+            )}
+
+            {userType == "monthly" && (
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Monthly Bill Reference:</span>
+                <span className="font-medium text-right text-sm">{paymentDetails.description}</span>
+              </div>
+            )}
+            
           </div>
-          {paymentData.duration && (
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-muted-foreground">Duration:</span>
-              <span className="font-medium">{paymentData.duration}</span>
-            </div>
-          )}
-          {paymentData.description && (
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-muted-foreground">Description:</span>
-              <span className="font-medium">{paymentData.description}</span>
-            </div>
-          )}
+
+          <div className="text-center border-t pt-4">
+            <div className="text-2xl font-bold text-primary">Total: {paymentDetails.totalAmount}</div>
+          </div>
         </div>
 
-        <div className="text-center border-t pt-4">
-          <div className="text-2xl font-bold text-primary">Total to Pay: {paymentData.totalAmount}</div>
-        </div>
-      </div>
-
-      {/* Payment Method Selection */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-medium text-center">Select Your Payment Method</h3>
-
-        <div className="grid gap-3">
-          <Card className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={handlePixPayment}>
-            <CardContent className="flex items-center justify-center p-4">
-              <QrCode className="h-6 w-6 mr-3 text-primary" />
-              <span className="font-medium">PIX</span>
-            </CardContent>
-          </Card>
-
-          <Card className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => setCurrentView("card")}>
-            <CardContent className="flex items-center justify-center p-4">
-              <CreditCard className="h-6 w-6 mr-3 text-primary" />
-              <span className="font-medium">Credit / Debit Card</span>
-            </CardContent>
-          </Card>
+        {/* Payment Method Selection */}
+        <div className="space-y-4">
+          <h3 className="text-lg font-medium text-center">Select Your Payment Method</h3>
+          <div className="grid gap-3">
+            <Card className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={handlePixPayment}>
+              <CardContent className="flex items-center justify-center p-4">
+                <QrCode className="h-6 w-6 mr-3 text-primary" />
+                <span className="font-medium">PIX</span>
+              </CardContent>
+            </Card>
+            <Card className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => setCurrentView("card")}>
+              <CardContent className="flex items-center justify-center p-4">
+                <CreditCard className="h-6 w-6 mr-3 text-primary" />
+                <span className="font-medium">Credit / Debit Card</span>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   const renderPixView = () => (
     <div className="space-y-6">
@@ -318,7 +405,7 @@ export function SelfServicePaymentModal({ isOpen, onClose, paymentData, userType
                 Processing...
               </>
             ) : (
-              `Pay ${paymentData.totalAmount}`
+              `Pay ${paymentDetails?.totalAmount}`
             )}
           </Button>
         </div>
@@ -326,21 +413,53 @@ export function SelfServicePaymentModal({ isOpen, onClose, paymentData, userType
     </div>
   )
 
-  return (
-    <>
-      <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-md">
-          {currentView === "summary" && renderSummaryView()}
-          {currentView === "pix" && renderPixView()}
-          {currentView === "card" && renderCardView()}
-        </DialogContent>
-      </Dialog>
+  const renderSuccessView = () => (
+    <div className="space-y-6 py-6">
+      <div className="flex flex-col items-center justify-center text-center space-y-4">
+        <div className="h-20 w-20 bg-green-100 rounded-full flex items-center justify-center">
+          <CheckCircle className="h-10 w-10 text-green-600" />
+        </div>
+        
+        {userType == "casual" && (
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">Payment Successful!</h2>
+            <p className="text-muted-foreground mt-2 max-w-xs mx-auto">
+              Your payment for <strong>{paymentDetails?.licensePlate}</strong> has been processed. 
+              You have 15 minutes to exit the parking lot. Thank you!
+            </p>
+          </div>
+        )}
 
-      <PaymentConfirmationModal
-        isOpen={showSuccessModal}
-        onClose={() => setShowSuccessModal(false)}
-        message={successMessage}
-      />
-    </>
+        {userType == "monthly" && (
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">Payment Successful!</h2>
+            <p className="text-muted-foreground mt-2 max-w-xs mx-auto">
+              Your payment has been processed. 
+              Thank you!
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="pt-4">
+        <Button 
+          className="w-full bg-primary hover:bg-primary/90" 
+          onClick={onClose}
+        >
+          Return to Homepage
+        </Button>
+      </div>
+    </div>
+  )
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        {currentView === "summary" && renderSummaryView()}
+        {currentView === "pix" && renderPixView()}
+        {currentView === "card" && renderCardView()}
+        {currentView === "success" && renderSuccessView()}
+      </DialogContent>
+    </Dialog>
   )
 }

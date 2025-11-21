@@ -202,7 +202,7 @@ export function PaymentModal({ isOpen, onClose, vehicle, onPaymentComplete }: Pa
           )}
 
           <Button
-            onClick={() => handlePaymentReceived()} // Chama sem argumentos
+            onClick={() => handlePaymentReceived()} 
             disabled={isCalculating || isSaving || !exitDetails || !selectedPaymentMethod}
             className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90"
           >

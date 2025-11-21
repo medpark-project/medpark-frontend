@@ -72,12 +72,9 @@ export function AddEditPlanModal({ isOpen, onClose, onSave, editingPlan }: AddEd
     }
 
     try {
-      // Chama a função 'onSave' (que está no pai e é async)
       await onSave(planDataAPI)
-      onClose() // Fecha o modal SÓ se o 'onSave' for bem-sucedido
+      onClose()
     } catch (error) {
-      // O 'onSave' (no pai) já mostra o toast de erro,
-      // então aqui só precisamos parar o loading
       console.error("Falha ao salvar o plano:", error)
     } finally {
       setIsLoading(false)

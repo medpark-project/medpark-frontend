@@ -1,6 +1,6 @@
 "use client"
 import { useState,useEffect } from "react"
-import { Search, Plus, Check, X, Eye } from "lucide-react"
+import { Search, Plus, Check, X, Eye, Receipt, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,13 @@ import Link from "next/link"
 import { ReviewApplicationModal } from "@/components/review-application-modal"
 import { MonthlyParkerDetailsModal } from "@/components/monthly-parker-details-modal"
 import api from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
+import { jwtDecode } from "jwt-decode"
+
+interface TokenPayload {
+  sub: string
+  profile: "ADMIN" | "OPERATOR"
+}
 
 interface Application {
   id: number
@@ -50,30 +57,25 @@ export default function MonthlyParkersPage() {
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false)
   const [selectedParker, setSelectedParker] = useState<Parker | null>(null)
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false)
-  const userRole = "Admin" // TODO: Isso deve vir de um Contexto de Autenticação
+  const [isGeneratingInvoices, setIsGeneratingInvoices] = useState(false)
+  const { toast } = useToast()
+  const [userRole, setUserRole] = useState<"ADMIN" | "OPERATOR" | null>(null)
 
   const fetchPageData = async () => {
     setIsLoading(true)
     try {
-      // 1. Busca as solicitações (isso já funciona)
       const solRes = await api.get("/solicitacoes-mensalista/")
       setApplications(solRes.data.filter((app: Application) => app.status === "PENDENTE"))
-
-      // 2. Busca a lista "magra" de mensalistas
       const menRes = await api.get("/mensalistas/")
       const mensalistasMagros: Parker[] = menRes.data
       
-      // 3. "Enriquece" cada mensalista buscando sua assinatura ativa
       const mensalistasEnriquecidos = await Promise.all(
         mensalistasMagros.map(async (mensalista) => {
           try {
-            // Tenta buscar a assinatura ativa que funciona
             const assinaturaRes = await api.get(`/assinaturas/mensalista/${mensalista.id}/ativa`)
             // Anexa a assinatura encontrada ao objeto do mensalista
             return { ...mensalista, assinatura: assinaturaRes.data }
           } catch (error) {
-            // Se der 404 (sem assinatura ativa), só retorna o mensalista "magro"
-            // (que já tem 'assinatura: null' do backend)
             return mensalista
           }
         })
@@ -89,6 +91,16 @@ export default function MonthlyParkersPage() {
   }
 
   useEffect(() => {
+    const token = localStorage.getItem("medpark_token")
+    if (token) {
+      try {
+        const decoded = jwtDecode<TokenPayload>(token)
+        setUserRole(decoded.profile)
+      } catch (error) {
+        console.error("Erro ao decodificar token", error)
+      }
+    }
+
     fetchPageData()
   }, [])
 
@@ -106,6 +118,27 @@ export default function MonthlyParkersPage() {
       console.error("Erro ao aprovar solicitação:", error)
     }
     setIsReviewModalOpen(false) // Fecha o modal
+  }
+
+  const handleGenerateInvoices = async () => {
+    setIsGeneratingInvoices(true)
+    try {
+      const response = await api.post("/pagamentos/gerar-faturas")
+      toast({
+        title: "Faturamento Concluído",
+        description: response.data.message, // Ex: "5 novas faturas geradas."
+        className: "bg-green-600 text-white border-none",
+      })
+    } catch (error) {
+      console.error("Erro ao gerar faturas:", error)
+      toast({
+        title: "Erro",
+        description: "Falha ao gerar faturas mensais.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsGeneratingInvoices(false)
+    }
   }
 
   const handleDecline = async (applicationId: number) => {
@@ -133,7 +166,7 @@ export default function MonthlyParkersPage() {
   }
 
   return (
-    <DashboardLayout userRole={userRole}>
+    <DashboardLayout userRole={userRole === "ADMIN" ? "Admin" : "Operator"}>
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Monthly Parkers</h1>
@@ -152,14 +185,28 @@ export default function MonthlyParkersPage() {
                   className="pl-10"
                 />
               </div>
-              {userRole === "Admin" && (
-                <Link href="/monthly-parkers/new">
-                  <Button className="gap-2">
-                    <Plus className="h-4 w-4" />
-                    Add New Parker
-                  </Button>
-                </Link>
-              )}
+
+              <div className="flex gap-3">
+                {userRole === "ADMIN" && (
+                  <>
+                    <Button 
+                      onClick={handleGenerateInvoices} 
+                      disabled={isGeneratingInvoices}
+                      className="gap-2 bg-orange-600 hover:bg-orange-700 text-white"
+                    >
+                      {isGeneratingInvoices ? <Loader2 className="h-4 w-4 animate-spin"/> : <Receipt className="h-4 w-4" />}
+                      Generate Invoices
+                    </Button>
+                    
+                    <Link href="/monthly-parkers/new">
+                      <Button className="gap-2">
+                        <Plus className="h-4 w-4" />
+                        Add New Parker
+                      </Button>
+                    </Link>
+                  </>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -263,7 +310,6 @@ export default function MonthlyParkersPage() {
                   <TableRow key={parker.id}>
                     <TableCell className="font-medium">{parker.nome_completo}</TableCell>
                     <TableCell>{parker.veiculo?.placa || "N/A"}</TableCell>
-                    {/* --- AGORA VAI FUNCIONAR --- */}
                     <TableCell>{parker.assinatura?.plano.nome || "N/A"}</TableCell>
                     <TableCell>
                       <Badge
