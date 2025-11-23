@@ -60,7 +60,8 @@ export default function MonthlyParkersPage() {
   const [isGeneratingInvoices, setIsGeneratingInvoices] = useState(false)
   const { toast } = useToast()
   const [userRole, setUserRole] = useState<"ADMIN" | "OPERATOR" | null>(null)
-
+  const [planosMap, setPlanosMap] = useState<Record<number, string>>({})
+  
   const fetchPageData = async () => {
     setIsLoading(true)
     try {
@@ -68,12 +69,19 @@ export default function MonthlyParkersPage() {
       setApplications(solRes.data.filter((app: Application) => app.status === "PENDENTE"))
       const menRes = await api.get("/mensalistas/")
       const mensalistasMagros: Parker[] = menRes.data
+      const planosRes = await api.get("/planos-mensalista/")
+      const mapa: Record<number, string> = {}
+      if (Array.isArray(planosRes.data)) {
+          planosRes.data.forEach((p: any) => {
+              mapa[p.id] = p.nome
+          })
+      }
+      setPlanosMap(mapa)
       
       const mensalistasEnriquecidos = await Promise.all(
         mensalistasMagros.map(async (mensalista) => {
           try {
             const assinaturaRes = await api.get(`/assinaturas/mensalista/${mensalista.id}/ativa`)
-            // Anexa a assinatura encontrada ao objeto do mensalista
             return { ...mensalista, assinatura: assinaturaRes.data }
           } catch (error) {
             return mensalista
@@ -126,7 +134,7 @@ export default function MonthlyParkersPage() {
       const response = await api.post("/pagamentos/gerar-faturas")
       toast({
         title: "Faturamento Concluído",
-        description: response.data.message, // Ex: "5 novas faturas geradas."
+        description: response.data.message,
         className: "bg-green-600 text-white border-none",
       })
     } catch (error) {
@@ -228,7 +236,7 @@ export default function MonthlyParkersPage() {
             
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-8">Carregando...</TableCell>
+                    <TableCell colSpan={4} className="text-center py-8">Loading...</TableCell>
                   </TableRow>
                 ) : applications.length === 0 ? (
                   <TableRow>
@@ -240,7 +248,9 @@ export default function MonthlyParkersPage() {
                 applications.map((application) => (
                   <TableRow key={application.id}>
                     <TableCell className="font-medium">{application.nome_completo}</TableCell>
-                    <TableCell>{application.plano_id}</TableCell>{/* TODO: Buscar nome do plano */}
+                    <TableCell>
+                        {planosMap[application.plano_id] || `ID: ${application.plano_id}`}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex gap-2 justify-end">
                         <Button
@@ -347,6 +357,7 @@ export default function MonthlyParkersPage() {
             isOpen={isReviewModalOpen}
             onClose={() => setIsReviewModalOpen(false)}
             application={selectedApplication}
+            planName={planosMap[selectedApplication.plano_id] || `Plan ID: ${selectedApplication.plano_id}`}
             onApprove={handleApprove}
             onDecline={handleDecline}
           />
