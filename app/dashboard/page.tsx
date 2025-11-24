@@ -128,7 +128,8 @@ export default function DashboardPage() {
           totalRevenueRes,      // 7. /reports/metrics/total-revenue-month
           avgTicketRes,         // 8. /reports/metrics/avg-ticket-month
           recentTransactionsRes,
-          financialRes
+          financialRes,
+          revenueRes
         ] = await Promise.all([
           api.get("/estacionamento/ativos"),
           api.get("/mensalistas/"),
@@ -139,6 +140,7 @@ export default function DashboardPage() {
           api.get("/reports/metrics/avg-ticket-month"),
           api.get("/reports/recent-transactions"),
           api.get("/reports/financial-history"),
+          api.get("/reports/daily-revenue"),
         ]);
 
         setVehiclesParked(veiculosRes.data.length);
@@ -147,7 +149,10 @@ export default function DashboardPage() {
 
         setOccupancyData(occupancyRes.data);
         setBreakdownData(breakdownRes.data);
-
+        if (revenueRes.data.length > 0) {
+          setTodaysRevenue(revenueRes.data[revenueRes.data.length - 1].revenue)
+        }
+        setRevenueData(revenueRes.data);
         setTotalRevenueMonth(totalRevenueRes.data.total_revenue);
         setAvgTicketPrice(avgTicketRes.data.average_ticket);
         

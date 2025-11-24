@@ -11,7 +11,7 @@ import { LoginModal } from "@/components/login-modal"
 import { SelfServicePaymentModal } from "@/components/self-service-payment-modal"
 import { Search, CreditCard, Users, Clock, CheckCircle, Loader2 } from "lucide-react"
 import Link from "next/link"
-import api from "@/lib/api" // Importa nossa API
+import api from "@/lib/api"
 
 export default function HomePage() {
   const [casualPlate, setCasualPlate] = useState("")
@@ -274,12 +274,7 @@ export default function HomePage() {
                         <span className="font-medium text-green-600">{monthlySubscriptionData?.status}</span>
                       </div>
                     </div>
-                    {!monthlySubscriptionData?.hasPendingBill ? (
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-muted-foreground">Next bill on:</span>
-                        <span className="font-medium">{monthlySubscriptionData?.nextBillDate}</span>
-                      </div>
-                    ) : (
+                    {monthlySubscriptionData?.hasPendingBill && ( 
                       <div className="border-t pt-3">
                         <div className="text-center text-orange-600 mb-2">
                           <Clock className="h-5 w-5 mx-auto mb-1" />
